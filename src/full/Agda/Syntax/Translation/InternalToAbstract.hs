@@ -750,6 +750,7 @@ instance DotVars A.Expr where
     A.Lit _                -> Set.empty
     A.QuestionMark{}       -> Set.empty
     A.Underscore _         -> Set.empty
+    A.Dot _ e              -> dotVars e
     A.App _ e1 e2          -> dotVars (e1, e2)
     A.WithApp _ e es       -> dotVars (e, es)
     A.Lam _ _ e            -> dotVars e
