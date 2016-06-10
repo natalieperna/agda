@@ -69,11 +69,11 @@ data MPat
   | LitMP Literal
   | DotMP MPat   -- ^ For keeping track of the original dot positions.
   | WildMP       -- ^ For dot patterns that cannot be turned into patterns.
-  | ProjMP QName -- ^ Projection copattern.
+  | ProjMP ProjOrigin QName -- ^ Projection copattern.
   deriving (Show)
 
 instance IsProjP MPat where
-  isProjP (ProjMP q) = Just (AmbQ [q])
+  isProjP (ProjMP o q) = Just (o, AmbQ [q])
   isProjP _ = Nothing
 
 buildMPatterns :: [Arg DeBruijnPattern] -> [Arg MPat]
@@ -83,7 +83,7 @@ buildMPatterns ps = map (fmap build) ps
     build (ConP con i ps) = ConMP con (conPRecord i) $ buildMPatterns $ map (fmap namedThing) $ ps
     build (DotP t)        = DotMP $ buildT t
     build (LitP l)        = LitMP l
-    build (ProjP dest)    = ProjMP dest
+    build (ProjP o dest)  = ProjMP o dest
 
     buildT (Con c args)   = ConMP c Nothing $ map (fmap buildT) args
     buildT (Var i [])     = VarMP i
@@ -259,9 +259,8 @@ matchPat _    (DotP _) q = Yes []
 -- on them doesn't change the reduction behaviour.
 matchPat mlit p (DotMP q) = matchPat mlit p q
 matchPat mlit (LitP l) q = mlit l q
-matchPat _    (ProjP d) (ProjMP d') = if d == d' then Yes [] else No
-matchPat _    (ProjP d) _ = __IMPOSSIBLE__
--- matchPat mlit (ConP c (Just _) ps) q | recordPattern ps = Yes ()  -- Andreas, 2012-07-25 record patterns always match!
+matchPat _    (ProjP _ d) (ProjMP _ d') = if d == d' then Yes [] else No
+matchPat _    (ProjP _ d) _ = __IMPOSSIBLE__
 matchPat mlit (ConP c _ ps) q = case q of
   VarMP x -> Block (Any False) [BlockingVar x (Just [c])]
   WildMP{} -> No -- Andreas, 2013-05-15 this was "Yes()" triggering issue 849
@@ -269,23 +268,5 @@ matchPat mlit (ConP c _ ps) q = case q of
     | c == c'   -> matchPats mlit (map (fmap namedThing) ps) qs
     | otherwise -> No
   LitMP _  -> __IMPOSSIBLE__
-  ProjMP _ -> __IMPOSSIBLE__
+  ProjMP{} -> __IMPOSSIBLE__
   DotMP _  -> __IMPOSSIBLE__
-
-{- UNUSED
-class RecordPattern a where
-  recordPattern :: a -> Bool
-
-instance RecordPattern Pattern where
-  recordPattern VarP{} = True
-  recordPattern DotP{} = False
-  recordPattern LitP{} = False
-  recordPattern (ConP _ Nothing _) = False
-  recordPattern (ConP _ (Just _) ps) = recordPattern ps
-
-instance RecordPattern a => RecordPattern [a] where
-  recordPattern = all recordPattern
-
-instance RecordPattern a => RecordPattern (Arg a) where
-  recordPattern = recordPattern . unArg
--}

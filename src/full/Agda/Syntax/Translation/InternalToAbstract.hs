@@ -104,11 +104,11 @@ elims :: Expr -> [I.Elim' Expr] -> TCM Expr
 elims e [] = return e
 elims e (I.Apply arg : es) =
   elims (A.App exprInfo e $ fmap unnamed arg) es
-elims e (I.Proj d    : es) = elims (A.App exprInfo (A.Proj $ AmbQ [d]) $ defaultNamedArg e) es
+elims e (I.Proj o d  : es) = elims (A.App exprInfo (A.Proj o $ AmbQ [d]) $ defaultNamedArg e) es
 
 reifyIElim :: Reify i a => I.Elim' i -> TCM (I.Elim' a)
-reifyIElim (I.Apply i) = I.Apply <$> traverse reify i
-reifyIElim (I.Proj d)  = return $ I.Proj d
+reifyIElim (I.Apply i)  = I.Apply <$> traverse reify i
+reifyIElim (I.Proj o d) = return $ I.Proj o d
 
 reifyIElims :: Reify i a => [I.Elim' i] -> TCM [I.Elim' a]
 reifyIElims = mapM reifyIElim
@@ -280,7 +280,7 @@ reifyDisplayFormP lhs@(A.SpineLHS i f ps wps) =
 
         argToPat arg = fmap unnamed <$> traverse termToPat arg
         elimToPat (I.Apply arg) = argToPat arg
-        elimToPat (I.Proj d)    = return $ defaultNamedArg $ A.ProjP patNoRange $ AmbQ [d]
+        elimToPat (I.Proj o d)  = return $ defaultNamedArg $ A.ProjP patNoRange o $ AmbQ [d]
 
         termToPat :: DisplayTerm -> TCM A.Pattern
 
@@ -565,8 +565,8 @@ instance (Reify i a) => Reify (Arg i) (Arg a) where
 instance Reify Elim Expr where
   reifyWhen = reifyWhenE
   reify e = case e of
-    I.Apply v -> appl "apply" <$> reify v
-    I.Proj f  -> appl "proj"  <$> reify ((defaultArg $ I.Def f []) :: Arg Term)
+    I.Apply v  -> appl "apply" <$> reify v
+    I.Proj o f -> appl "proj"  <$> reify ((defaultArg $ I.Def f []) :: Arg Term)
     where
       appl :: String -> Arg Expr -> Expr
       appl s v = A.App exprInfo (A.Lit (LitString noRange s)) $ fmap unnamed v
@@ -617,7 +617,7 @@ stripImplicits (ps, wps) = do          -- v if show-implicit we don't need the n
       patVars p = case p of
         A.VarP x      -> Set.singleton x
         A.ConP _ _ ps -> argsVars ps
-        A.ProjP _ _   -> Set.empty
+        A.ProjP{}     -> Set.empty
         A.DefP _ _ ps -> Set.empty
         A.DotP _ e    -> Set.empty
         A.WildP _     -> Set.empty
@@ -669,7 +669,7 @@ stripImplicits (ps, wps) = do          -- v if show-implicit we don't need the n
           stripPat p = case p of
             A.VarP _      -> p
             A.ConP i c ps -> A.ConP i c $ stripArgs True ps
-            A.ProjP _ _   -> p
+            A.ProjP{}     -> p
             A.DefP _ _ _  -> p
             A.DotP _ e    -> p
             A.WildP _     -> p
@@ -723,7 +723,7 @@ instance DotVars A.Pattern where
   dotVars p = case p of
     A.VarP _      -> Set.empty   -- do not add pattern vars
     A.ConP _ _ ps -> dotVars ps
-    A.ProjP _ _   -> Set.empty
+    A.ProjP{}     -> Set.empty
     A.DefP _ _ ps -> dotVars ps
     A.DotP _ e    -> dotVars e
     A.WildP _     -> Set.empty
@@ -745,7 +745,7 @@ instance DotVars A.Expr where
     A.ScopedExpr _ e       -> dotVars e
     A.Var x                -> Set.singleton x -- add any expression variable
     A.Def _                -> Set.empty
-    A.Proj _               -> Set.empty
+    A.Proj{}               -> Set.empty
     A.Con _                -> Set.empty
     A.Lit _                -> Set.empty
     A.QuestionMark{}       -> Set.empty
@@ -846,7 +846,7 @@ reifyPatterns tel perm ps = runTickT (reifyArgs ps)
             t'   = if Set.member "()" vars then underscore else t
         return $ A.DotP patNoRange t'
       I.LitP l  -> return $ A.LitP l
-      I.ProjP d -> return $ A.ProjP patNoRange $ AmbQ [d]
+      I.ProjP o d     -> return $ A.ProjP patNoRange o $ AmbQ [d]
       I.ConP c cpi ps -> do
         liftTCM $ reportSLn "reify.pat" 60 $ "reifying pattern " ++ show p
         tryRecPFromConP =<< do A.ConP ci (AmbQ [conName c]) <$> reifyArgs ps

@@ -208,7 +208,7 @@ instance GenC a => GenC (Abs a) where
 
 instance GenC a => GenC (Elim' a) where
   genC conf = frequency [ (applyF, Apply <$> genC conf)
-                        , (projF, Proj . unProjName <$> genC conf) ]
+                        , (projF, Proj ProjSystem . unProjName <$> genC conf) ]
     where
       ElimFreqs {applyFreq = applyF, projFreq = projF } =
         elimFreqs $ tcFrequencies conf
@@ -440,7 +440,7 @@ instance ShrinkC a b => ShrinkC (Blocked a) (Blocked b) where
 
 instance ShrinkC a b => ShrinkC (Elim' a) (Elim' b) where
   shrinkC conf (Apply a) = Apply <$> shrinkC conf a
-  shrinkC conf (Proj  p) = []
+  shrinkC conf Proj{}    = []
   noShrink = fmap noShrink
 
 -- Andreas 2010-09-21: simplify? since Sort Prop is no longer abused as DontCare

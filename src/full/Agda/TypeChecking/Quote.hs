@@ -170,7 +170,7 @@ quotingKit = do
       quotePat (DotP _)          = pure dotP
       quotePat (ConP c _ ps)     = conP !@ quoteQName (conName c) @@ quotePats ps
       quotePat (LitP l)          = litP !@! Lit l
-      quotePat (ProjP x)         = projP !@ quoteQName x
+      quotePat (ProjP _ x)       = projP !@ quoteQName x
 
       quoteBody :: I.ClauseBody -> Maybe (ReduceM Term)
       quoteBody (Body a) = Just (quoteTerm a)
@@ -299,4 +299,3 @@ quoteList :: [Term] -> TCM Term
 quoteList xs = do
   kit <- quotingKit
   runReduceM (quoteListWithKit kit pure xs)
-

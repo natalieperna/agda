@@ -102,7 +102,7 @@ instance LabelPatVars (Pattern' x) (Pattern' (i,x)) i where
       DotP t       -> DotP t <$ next
       ConP c mt ps -> ConP c mt <$> labelPatVars ps
       LitP l       -> return $ LitP l
-      ProjP q      -> return $ ProjP q
+      ProjP o q    -> return $ ProjP o q
     where next = do (x:xs) <- get; put xs; return x
   unlabelPatVars = fmap snd
 
@@ -143,7 +143,7 @@ dbPatPerm ps = Perm (size ixs) picks
     getIndices (ConP c _ ps) = concatMap (getIndices . namedThing . unArg) ps
     getIndices (DotP _)      = [Nothing]
     getIndices (LitP _)      = []
-    getIndices (ProjP _)     = []
+    getIndices ProjP{}       = []
 
 clausePerm :: Clause -> Permutation
 clausePerm = dbPatPerm . namedClausePats
@@ -154,7 +154,7 @@ patternToElim (Arg ai (ConP c _ ps)) = Apply $ Arg ai $ Con c $
       map (argFromElim . patternToElim . fmap namedThing) ps
 patternToElim (Arg ai (DotP t)     ) = Apply $ Arg ai t
 patternToElim (Arg ai (LitP l)     ) = Apply $ Arg ai $ Lit l
-patternToElim (Arg ai (ProjP dest) ) = Proj  $ dest
+patternToElim (Arg ai (ProjP o dest)) = Proj o dest
 
 patternsToElims :: [NamedArg DeBruijnPattern] -> [Elim]
 patternsToElims ps = map build ps
@@ -165,23 +165,4 @@ patternsToElims ps = map build ps
 patternToTerm :: DeBruijnPattern -> Term
 patternToTerm p = case patternToElim (defaultArg p) of
   Apply x -> unArg x
-  Proj  f -> __IMPOSSIBLE__
-
--- patternsToElims :: Permutation -> [NamedArg Pattern] -> [Elim]
--- patternsToElims perm ps = evalState (mapM build' ps) xs
---   where
---     xs   = permute (invertP __IMPOSSIBLE__ perm) $ downFrom (size perm)
-
---     tick :: State [Int] Int
---     tick = do x : xs <- get; put xs; return x
-
---     build' :: NamedArg Pattern -> State [Int] Elim
---     build' = build . fmap namedThing
-
---     build :: Arg Pattern -> State [Int] Elim
---     build (Arg ai (VarP _)     ) = Apply . Arg ai . var <$> tick
---     build (Arg ai (ConP c _ ps)) =
---       Apply . Arg ai . Con c <$> mapM (argFromElim <.> build') ps
---     build (Arg ai (DotP t)     ) = Apply (Arg ai t) <$ tick
---     build (Arg ai (LitP l)     ) = return $ Apply $ Arg ai $ Lit l
---     build (Arg ai (ProjP dest) ) = return $ Proj  $ dest
+  Proj{}  -> __IMPOSSIBLE__
