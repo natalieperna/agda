@@ -367,9 +367,13 @@ maybeInlineDef q vs =
     lift $ cacheTreeless q
     def <- lift $ getConstInfo q
     case theDef def of
-      fun@Function{}
+      def'@Function{ funInline = inline }
         | fun ^. funInline -> doinline
+        | isProperProjection def' -> do
+            lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
+            doinline
         | otherwise -> do
+        _ <- lift $ toTreeless' q
         used <- lift $ getCompiledArgUse q
         let substUsed False _   = pure C.TErased
             substUsed True  arg = substArg arg
