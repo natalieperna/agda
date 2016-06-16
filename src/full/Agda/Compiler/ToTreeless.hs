@@ -328,8 +328,11 @@ maybeInlineDef q vs =
   ifM (lift $ alwaysInline q) doinline $ do
     def <- lift $ getConstInfo q
     case theDef def of
-      Function{ funInline = inline }
+      def'@Function{ funInline = inline }
         | inline    -> doinline
+        | isProperProjection def' -> do
+            lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
+            doinline
         | otherwise -> do
         _ <- lift $ toTreeless' q
         used <- lift $ getCompiledArgUse q
