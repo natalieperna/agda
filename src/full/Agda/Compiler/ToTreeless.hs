@@ -31,6 +31,7 @@ import Agda.Compiler.Treeless.Pretty
 import Agda.Compiler.Treeless.Unused
 import Agda.Compiler.Treeless.AsPatterns
 import Agda.Compiler.Treeless.Identity
+import Agda.Compiler.Treeless.InlineProjections
 
 import Agda.Syntax.Common
 import Agda.TypeChecking.Monad as TCM
@@ -103,6 +104,8 @@ ccToTreeless q cc = do
   reportSDoc "treeless.opt.simpl" (30 + v) $ text "-- after third simplification"  $$ pbody body
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
+  body <- inlineProjections body
+  reportSDoc "treeless.opt.inline" (30 + v) $ text "-- after projection inlining"  $$ pbody body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
