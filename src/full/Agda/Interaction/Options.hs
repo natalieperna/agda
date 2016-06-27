@@ -114,6 +114,8 @@ data CommandLineOptions = Options
   , optPragmaOptions    :: PragmaOptions
   , optSharing          :: Bool
   , optCaching          :: Bool
+  , optInlineProj       :: Bool
+  , optSquashCases      :: Bool
   , optOnlyScopeChecking :: Bool
     -- ^ Should the top-level module only be scope-checked, and not
     --   type-checked?
@@ -202,6 +204,8 @@ defaultOptions = Options
   , optSharing          = False
   , optCaching          = False
   , optOnlyScopeChecking = False
+  , optInlineProj       = False
+  , optSquashCases      = False
   }
 
 defaultPragmaOptions :: PragmaOptions
@@ -335,6 +339,12 @@ sharingFlag b o = return $ o { optSharing = b }
 
 cachingFlag :: Bool -> Flag CommandLineOptions
 cachingFlag b o = return $ o { optCaching = b }
+
+inlineProjFlag :: Flag CommandLineOptions
+inlineProjFlag o = return $ o { optInlineProj = True }
+
+squashCasesFlag :: Flag CommandLineOptions
+squashCasesFlag o = return $ o { optSquashCases = True }
 
 proofIrrelevanceFlag :: Flag PragmaOptions
 proofIrrelevanceFlag o = return $ o { optProofIrrelevance = True }
@@ -565,6 +575,10 @@ standardOptions =
                     "disable caching of typechecking"
     , Option []     ["only-scope-checking"] (NoArg onlyScopeCheckingFlag)
                     "only scope-check the top-level module, do not type-check it"
+    , Option []     ["inline-proj"] (NoArg inlineProjFlag)
+                    "inline proper projections"
+    , Option []     ["squash-cases"] (NoArg squashCasesFlag)
+                    "somehow prevent/prune duplicate constructors in cases"
     ] ++ map (fmap lift) pragmaOptions
   where
   lift :: Flag PragmaOptions -> Flag CommandLineOptions
