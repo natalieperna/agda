@@ -121,6 +121,8 @@ data CommandLineOptions = Options
   , optSafe             :: Bool
   , optSharing          :: Bool
   , optCaching          :: Bool
+  , optInlineProj       :: Bool
+  , optSquashCases      :: Bool
   }
   deriving Show
 
@@ -213,6 +215,8 @@ defaultOptions = Options
   , optSafe             = False
   , optSharing          = False
   , optCaching          = False
+  , optInlineProj       = False
+  , optSquashCases      = False
   }
 
 defaultPragmaOptions :: PragmaOptions
@@ -351,6 +355,12 @@ sharingFlag b o = return $ o { optSharing = b }
 
 cachingFlag :: Bool -> Flag CommandLineOptions
 cachingFlag b o = return $ o { optCaching = b }
+
+inlineProjFlag :: Flag CommandLineOptions
+inlineProjFlag o = return $ o { optInlineProj = True }
+
+squashCasesFlag :: Flag CommandLineOptions
+squashCasesFlag o = return $ o { optSquashCases = True }
 
 proofIrrelevanceFlag :: Flag PragmaOptions
 proofIrrelevanceFlag o = return $ o { optProofIrrelevance = True }
@@ -637,6 +647,10 @@ standardOptions =
                     "enable caching of typechecking (experimental) (default: OFF)"
     , Option []     ["no-caching"] (NoArg $ cachingFlag False)
                     "disable caching of typechecking"
+    , Option []     ["inline-proj"] (NoArg inlineProjFlag)
+                    "inline proper projections"
+    , Option []     ["squash-cases"] (NoArg squashCasesFlag)
+                    "somehow prevent/prune duplicate constructors in cases"
     ] ++ map (fmap lift) pragmaOptions
   where
   lift :: Flag PragmaOptions -> Flag CommandLineOptions
