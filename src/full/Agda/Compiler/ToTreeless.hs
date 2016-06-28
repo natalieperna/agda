@@ -25,6 +25,7 @@ import qualified Agda.TypeChecking.CompiledClause as CC
 import Agda.TypeChecking.Records (getRecordConstructor)
 import Agda.TypeChecking.Pretty
 import Agda.TypeChecking.CompiledClause
+import Agda.Interaction.Options
 
 import Agda.Compiler.Treeless.Builtin
 import Agda.Compiler.Treeless.Simplify
@@ -330,10 +331,11 @@ maybeInlineDef :: I.QName -> I.Args -> CC C.TTerm
 maybeInlineDef q vs =
   ifM (lift $ alwaysInline q) doinline $ do
     def <- lift $ getConstInfo q
+    doInlineProj <- optInlineProj <$> lift commandLineOptions
     case theDef def of
       def'@Function{ funInline = inline }
         | inline    -> doinline
-        | isProperProjection def' -> do
+        | isProperProjection def' && doInlineProj -> do
             lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
             doinline
         | otherwise -> do
