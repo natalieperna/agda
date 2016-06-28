@@ -1,0 +1,3 @@
+name: InlineTest
+include: .
+depend: standard-library, RATH-Agda
