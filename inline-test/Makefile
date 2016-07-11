@@ -1,4 +1,4 @@
-PROG=InlineTest
+PROG=LeqFromMeet2
 SUFF=inlined
 HS=MAlonzo/Code/$(PROG).hs
 
