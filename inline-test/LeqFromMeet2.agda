@@ -1,4 +1,5 @@
-module InlineTest2 where
+-- Source: https://github.com/agda/agda/issues/1895#issuecomment-211078299
+module LeqFromMeet2 where
 
 open import Level
 open import Relation.Binary using (Poset)
