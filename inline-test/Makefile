@@ -10,6 +10,9 @@ diff: patched unpatched
 patched:
 	$(AGDA) --compile --compile-dir=compile-$(SUFF) --ghc-dont-call-ghc --inline-proj $(PROG).agda
 
+patched-v:
+	$(AGDA) -v:treeless.opt.inline:30 --compile --compile-dir=compile-$(SUFF) --ghc-dont-call-ghc --inline-proj $(PROG).agda
+
 unpatched:
 	$(AGDA) --compile --compile-dir=compile --ghc-dont-call-ghc $(PROG).agda
 
