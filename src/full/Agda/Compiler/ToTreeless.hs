@@ -33,7 +33,7 @@ import Agda.Compiler.Treeless.Erase
 import Agda.Compiler.Treeless.Uncase
 import Agda.Compiler.Treeless.Pretty
 import Agda.Compiler.Treeless.Unused
-import Agda.Compiler.Treeless.InlineProjections
+-- TODO import Agda.Compiler.Treeless.InlineProjections
 
 import Agda.Syntax.Common
 import Agda.TypeChecking.Monad as TCM
@@ -104,6 +104,20 @@ ccToTreeless q cc = do
   setTreeless q body
   setCompiledArgUse q used
   return body
+
+inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
+inlineProjections q body =
+  case body of
+    C.TCase sc t def alts -> do
+      let pbody b = pbody' "" b
+          pbody' suf b = sep [ text (show q ++ suf) <+> text "=", nest 2 $ prettyPure b ]
+      v <- ifM (alwaysInline q) (return 20) (return 0)
+      reportSDoc "treeless.opt.inline" (30 + v) $ text "-- during projection inlining"  $$ pbody body
+      --putStrLn (show def)
+      return body
+    -- | TCase Int CaseType TTerm [TAlt]
+    -- ^ Case scrutinee (always variable), case type, default value, alternatives
+    otherwise -> return body
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
