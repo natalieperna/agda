@@ -93,8 +93,8 @@ ccToTreeless q cc = do
   reportSDoc "treeless.opt.simpl" (30 + v) $ text "-- after third simplification"  $$ pbody body
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
-  body <- inlineProjections body
-  reportSDoc "treeless.opt.inline" (30 + v) $ text "-- after projection inlining"  $$ pbody body
+  body <- inlineProjections q body
+  --reportSDoc "treeless.opt.inline" (30 + v) $ text "-- after projection inlining"  $$ pbody body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
@@ -106,18 +106,29 @@ ccToTreeless q cc = do
   return body
 
 inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
-inlineProjections q body =
-  case body of
-    C.TCase sc t def alts -> do
-      let pbody b = pbody' "" b
-          pbody' suf b = sep [ text (show q ++ suf) <+> text "=", nest 2 $ prettyPure b ]
-      v <- ifM (alwaysInline q) (return 20) (return 0)
-      reportSDoc "treeless.opt.inline" (30 + v) $ text "-- during projection inlining"  $$ pbody body
-      --putStrLn (show def)
-      return body
-    -- | TCase Int CaseType TTerm [TAlt]
-    -- ^ Case scrutinee (always variable), case type, default value, alternatives
-    otherwise -> return body
+inlineProjections q body = do
+  let pbody b = pbody' "" b
+      pbody' suf b = sep [ text (show q ++ suf) <+> text "=", nest 2 $ prettyPure b ]
+  v <- ifM (alwaysInline q) (return 20) (return 0)
+  reportSDoc "treeless.opt.inline" (30 + v) $ text "TLam" $$ pbody body $$ printCases body
+  return body
+  
+--printCases :: C.TTerm -> TCM Doc
+printCases t =
+  case t of
+    C.TApp tt ar -> text "TApp: " <+> printCases tt
+    C.TLam tt -> text "TLam: " <+> printCases tt
+    C.TLet tt1 tt2 -> text "TLet1: " <+> printCases tt1 $$ text ", TLet2: " <+> printCases tt2 
+    C.TCase sc t def alts -> text ("TCase(" ++ show sc ++ "):") <+> printCases def <+> sep (map printConstCases alts) <+> text ")"
+    otherwise -> text $ show t
+
+printConstCases :: C.TAlt -> TCM Doc
+printConstCases alt =
+  case alt of
+    C.TACon name ar body -> text ("TACon (ar = " ++ show ar ++ "): ") <+> printCases body
+    C.TAGuard guard body -> text "TAGuard: " <+> printCases body
+    C.TALit lit body -> text "TALit: " <+> printCases body
+
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
