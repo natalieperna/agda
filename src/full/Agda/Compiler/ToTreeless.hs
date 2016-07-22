@@ -110,24 +110,25 @@ inlineProjections q body = do
   let pbody b = pbody' "" b
       pbody' suf b = sep [ text (show q ++ suf) <+> text "=", nest 2 $ prettyPure b ]
   v <- ifM (alwaysInline q) (return 20) (return 0)
-  reportSDoc "treeless.opt.inline" (30 + v) $ text "TLam" $$ pbody body $$ printCases body
+  reportSDoc "treeless.opt.inline" (30 + v) $ text "TLam" $$ pbody body $$ printCases body []
   return body
   
---printCases :: C.TTerm -> TCM Doc
-printCases t =
+printCases :: C.TTerm -> [Int] -> TCM Doc
+printCases t vars  =
+  text (show vars) $$
   case t of
-    C.TApp tt ar -> text "TApp: " <+> printCases tt
-    C.TLam tt -> text "TLam: " <+> printCases tt
-    C.TLet tt1 tt2 -> text "TLet1: " <+> printCases tt1 $$ text ", TLet2: " <+> printCases tt2 
-    C.TCase sc t def alts -> text ("TCase(" ++ show sc ++ "):") <+> printCases def <+> sep (map printConstCases alts) <+> text ")"
+    C.TApp tt ar -> text "TApp: " <+> printCases tt vars
+    C.TLam tt -> text "TLam: " <+> printCases tt vars
+    C.TLet tt1 tt2 -> text "TLet1: " <+> printCases tt1 vars $$ text ", TLet2: " <+> printCases tt2 vars
+    C.TCase sc t def alts -> text ("TCase(" ++ show sc ++ "):") <+> printCases def (sc:vars) <+> sep (map (printConstCases (sc:vars)) alts ) <+> text ")"
     otherwise -> text $ show t
 
-printConstCases :: C.TAlt -> TCM Doc
-printConstCases alt =
+printConstCases :: [Int] -> C.TAlt -> TCM Doc
+printConstCases vars alt =
   case alt of
-    C.TACon name ar body -> text ("TACon (ar = " ++ show ar ++ "): ") <+> printCases body
-    C.TAGuard guard body -> text "TAGuard: " <+> printCases body
-    C.TALit lit body -> text "TALit: " <+> printCases body
+    C.TACon name ar body -> text ("TACon (ar = " ++ show ar ++ "): ") <+> printCases body vars
+    C.TAGuard guard body -> text "TAGuard: " <+> printCases body vars
+    C.TALit lit body -> text "TALit: " <+> printCases body vars
 
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
