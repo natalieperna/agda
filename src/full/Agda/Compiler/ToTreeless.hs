@@ -118,7 +118,7 @@ printCases vars t  =
   text (show vars) <+>
   case t of
     C.TApp tt args -> text "TApp:" <+> sep (map (printCases vars) args ++ [printCases vars tt])
-    C.TLam tt -> text "TLam: " <+> printCases vars tt
+    C.TLam tt -> text "TLam: " <+> printCases (map (+1) vars) tt
     C.TLet tt1 tt2 -> text "TLet1: " <+> printCases vars tt1 $$ text ", TLet2: " <+> printCases vars tt2
     C.TCase sc t def alts -> text ("TCase(" ++ show sc ++ "):") <+> sep (map (printConstCases (sc:vars)) alts ++ [printCases (sc:vars) def])
     otherwise -> text $ show t
@@ -127,7 +127,7 @@ printConstCases :: [Int] -> C.TAlt -> TCM Doc
 printConstCases vars alt =
   text (show vars) <+>
   case alt of
-    C.TACon name ar body -> text ("TACon (ar = " ++ show ar ++ "): ") <+> printCases vars body
+    C.TACon name ar body -> text ("TACon (ar = " ++ show ar ++ "): ") <+> printCases (map (+ar) vars) body
     C.TAGuard guard body -> text "TAGuard: " <+> printCases vars body
     C.TALit lit body -> text "TALit: " <+> printCases vars body
 
