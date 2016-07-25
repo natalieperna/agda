@@ -110,7 +110,7 @@ inlineProjections q body = do
   let pbody b = pbody' "" b
       pbody' suf b = sep [ text (show q ++ suf) <+> text "=", nest 2 $ prettyPure b ]
   v <- ifM (alwaysInline q) (return 20) (return 0)
-  reportSDoc "treeless.opt.inline" (30 + v) $ text "TLam" $$ pbody body $$ printCases body []
+  reportSDoc "treeless.opt.inline" (30 + v) $ pbody body $$ printCases body []
   return body
   
 printCases :: C.TTerm -> [Int] -> TCM Doc
