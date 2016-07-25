@@ -127,7 +127,7 @@ inlineProjections q body = do
   
 printCases :: C.TTerm -> [Int] -> TCM Doc
 printCases t vars  =
-  text (show vars) $$
+  text (show vars) <+>
   case t of
     C.TApp tt ar -> text "TApp: " <+> printCases tt vars
     C.TLam tt -> text "TLam: " <+> printCases tt vars
@@ -137,6 +137,7 @@ printCases t vars  =
 
 printConstCases :: [Int] -> C.TAlt -> TCM Doc
 printConstCases vars alt =
+  text (show vars) <+>
   case alt of
     C.TACon name ar body -> text ("TACon (ar = " ++ show ar ++ "): ") <+> printCases body vars
     C.TAGuard guard body -> text "TAGuard: " <+> printCases body vars
