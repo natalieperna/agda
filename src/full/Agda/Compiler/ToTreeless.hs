@@ -94,7 +94,7 @@ ccToTreeless q cc = do
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
   body <- inlineProjections q body
-  --reportSDoc "treeless.opt.inline" (30 + v) $ text "-- after projection inlining"  $$ pbody body
+  reportSDoc "treeless.opt.inline" (30 + v) $ text "-- after projection inlining"  $$ pbody body $$ printCases [] body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
@@ -106,13 +106,45 @@ ccToTreeless q cc = do
   return body
 
 inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
-inlineProjections q body = do
-  let pbody b = pbody' "" b
-      pbody' suf b = sep [ text (show q ++ suf) <+> text "=", nest 2 $ prettyPure b ]
-  v <- ifM (alwaysInline q) (return 20) (return 0)
-  reportSDoc "treeless.opt.inline" (30 + v) $ pbody body $$ printCases [] body
-  return body
-  
+inlineProjections q body = return $ dedupTerm [] body
+
+-- Scope: [(case scrutinee, corresponding constructor arguments)]
+-- TODO Add constructor name?
+type CaseScope = [(Int, [Int])]
+
+dedupTerm :: CaseScope -> C.TTerm -> C.TTerm
+dedupTerm env body =
+  -- TODO Right way to identify TTerms with nested TTerms (typeclass?)
+  case body of
+    -- increment vars in scope to account for newly bound
+    C.TLam tt -> C.TLam (dedupTerm (modifyCaseScope (+1) env) tt)
+    -- include scrutinee in def's/alts' scope, constructor args yet to be filled in
+    -- TODO Maybe shouldn't for def case?
+    C.TCase sc t def alts -> C.TCase sc t
+      (dedupTerm ((sc,[]):env) def)
+      (map (dedupAlt ((sc,[]):env)) alts)
+    -- Continue traversing nested terms
+    C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
+    C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm' tt2)
+    _ -> body
+    where dedupTerm' = dedupTerm env
+
+dedupAlt :: CaseScope -> C.TAlt -> C.TAlt
+dedupAlt env alt =
+  case alt of
+    -- Add new constructor vars to scope
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars ar env) body)
+    -- Continue traversing nested terms
+    C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
+    C.TALit lit body -> C.TALit lit (dedupTerm' body)
+    where
+      dedupTerm' = dedupTerm env
+      -- TODO Handle missing bindVar patterns
+      bindVars n ((sc,[]):scope) = (sc+n,[n-1..0]):modifyCaseScope (+n) scope
+
+modifyCaseScope :: (Int -> Int) -> CaseScope -> CaseScope
+modifyCaseScope f = map (\(sc, args) -> (f sc, map f args))
+
 printCases :: [Int] -> C.TTerm -> TCM Doc
 printCases vars t  =
   text (show vars) <+>
@@ -121,7 +153,7 @@ printCases vars t  =
     C.TLam tt -> text "TLam: " <+> printCases (map (+1) vars) tt
     C.TLet tt1 tt2 -> text "TLet1: " <+> printCases vars tt1 $$ text ", TLet2: " <+> printCases vars tt2
     C.TCase sc t def alts -> text ("TCase(" ++ show sc ++ "):") <+> sep (map (printConstCases (sc:vars)) alts ++ [printCases (sc:vars) def])
-    otherwise -> text $ show t
+    _ -> text $ show t
 
 printConstCases :: [Int] -> C.TAlt -> TCM Doc
 printConstCases vars alt =
