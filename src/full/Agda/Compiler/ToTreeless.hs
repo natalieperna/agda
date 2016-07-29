@@ -146,7 +146,7 @@ substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
 substituteAlt [] to alt =
   case alt of
     -- Add new constructor vars to from
-    C.TACon name ar body -> C.TACon name ar (substituteTerm [ar-1..0] to body)
+    C.TACon name ar body -> C.TACon name ar (substituteTerm [ar-1,ar-2..0] to body)
     -- TODO unmatched case
 substituteAlt from to alt =
   case alt of
@@ -185,7 +185,7 @@ dedupAlt env alt =
     where
       dedupTerm' = dedupTerm env
       -- TODO Handle missing bindVar patterns
-      bindVars n ((sc,[]):scope) = (sc+n,[n-1..0]):modifyCaseScope (+n) scope
+      bindVars n ((sc,[]):scope) = (sc+n,[n-1,n-2..0]):modifyCaseScope (+n) scope
 
 modifyCaseScope :: (Int -> Int) -> CaseScope -> CaseScope
 modifyCaseScope f = map (\(sc, args) -> (f sc, map f args))
