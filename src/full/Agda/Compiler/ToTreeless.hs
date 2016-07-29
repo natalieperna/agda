@@ -12,6 +12,7 @@ import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Traversable (traverse)
+import Data.List
 
 import Agda.Syntax.Common
 import Agda.Syntax.Internal (QName)
@@ -135,11 +136,13 @@ dedupTerm env body =
     C.TCase sc t def alts ->
       -- Check if scrutinee is already in scope
       case (lookup sc env) of
+        -- If in scope, then substitute
         Just vars ->
           C.TCase sc t
           (dedupTerm env def)
           (map (dedupAlt env) subs)
           where subs = map (substituteAlt [] vars) alts
+        -- Otherwise add to scope
         Nothing ->
           C.TCase sc t
           (dedupTerm ((sc,[]):env) def)
@@ -151,8 +154,37 @@ dedupTerm env body =
     where dedupTerm' = dedupTerm env
 
 substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
-substituteAlt [] to = id -- Figure out what to pattern match against, then substitute
-substituteAlt from to = id -- Replace vars in from with vars in to
+-- Figure out what to pattern match against, then substitute
+substituteAlt [] to alt =
+  case alt of
+    -- Add new constructor vars to from
+    C.TACon name ar body -> C.TACon name ar (substituteTerm [ar-1..0] to body)
+    -- TODO unmatched case
+substituteAlt from to alt =
+  case alt of
+    C.TACon name ar body -> C.TACon name ar (substituteTerm (map (+ar) from) (map (+ar) to) body)
+    C.TAGuard guard body -> C.TAGuard guard (substituteTerm' body)
+    C.TALit lit body -> C.TALit lit (substituteTerm' body)
+    where
+      substituteTerm' = substituteTerm from to
+      substituteAlt' = substituteAlt from to
+
+substituteTerm :: [Int] -> [Int] -> C.TTerm -> C.TTerm
+substituteTerm from to tt =
+  case tt of
+    -- Replace var if in from list
+    C.TVar var -> case (elemIndex var from) of
+      Just i -> C.TVar (to !! i) -- TODO make sure that from and to are the same length first
+      Nothing -> tt
+    -- Continue traversing nested terms
+    C.TLam tt -> C.TLam (substituteTerm (map (+1) from) (map (+1) to) tt)
+    C.TCase sc t def alts -> C.TCase sc t (substituteTerm' def) (map substituteAlt' alts)
+    C.TApp tt args -> C.TApp (substituteTerm' tt) (map substituteTerm' args)
+    C.TLet tt1 tt2 -> C.TLet (substituteTerm' tt1) (substituteTerm' tt2)
+    _ -> tt
+    where
+      substituteTerm' = substituteTerm from to
+      substituteAlt' = substituteAlt from to
 
 dedupAlt :: CaseScope -> C.TAlt -> C.TAlt
 dedupAlt env alt =
