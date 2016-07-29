@@ -132,14 +132,27 @@ dedupTerm env body =
     C.TLam tt -> C.TLam (dedupTerm (modifyCaseScope (+1) env) tt)
     -- include scrutinee in def's/alts' scope, constructor args yet to be filled in
     -- TODO Maybe shouldn't for def case?
-    C.TCase sc t def alts -> C.TCase sc t
-      (dedupTerm ((sc,[]):env) def)
-      (map (dedupAlt ((sc,[]):env)) alts)
+    C.TCase sc t def alts ->
+      -- Check if scrutinee is already in scope
+      case (lookup sc env) of
+        Just vars ->
+          C.TCase sc t
+          (dedupTerm env def)
+          (map (dedupAlt env) subs)
+          where subs = map (substituteAlt [] vars) alts
+        Nothing ->
+          C.TCase sc t
+          (dedupTerm ((sc,[]):env) def)
+          (map (dedupAlt ((sc,[]):env)) alts)
     -- Continue traversing nested terms
     C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
     C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm' tt2)
     _ -> body
     where dedupTerm' = dedupTerm env
+
+substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
+substituteAlt [] to = id -- Figure out what to pattern match against, then substitute
+substituteAlt from to = id -- Replace vars in from with vars in to
 
 dedupAlt :: CaseScope -> C.TAlt -> C.TAlt
 dedupAlt env alt =
