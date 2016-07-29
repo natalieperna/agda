@@ -198,6 +198,7 @@ dedupAlt env alt =
       dedupTerm' = dedupTerm env
       -- TODO Handle missing bindVar patterns
       bindVars n ((sc,[]):scope) = (sc+n,[n-1,n-2..0]):modifyCaseScope (+n) scope
+      bindVars n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
 
 modifyCaseScope :: (Int -> Int) -> CaseScope -> CaseScope
 modifyCaseScope f = map (\(sc, args) -> (f sc, map f args))
