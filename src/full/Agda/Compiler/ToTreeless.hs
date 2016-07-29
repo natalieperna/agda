@@ -158,7 +158,7 @@ substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
 substituteAlt [] to alt =
   case alt of
     -- Add new constructor vars to from
-    C.TACon name ar body -> C.TACon name ar (substituteTerm [ar-1,ar-2..0] to body)
+    C.TACon name ar body -> C.TACon name ar (substituteTerm [ar-1,ar-2..0] (map (+ar) to) body)
     -- TODO unmatched case
 substituteAlt from to alt =
   case alt of
