@@ -176,9 +176,13 @@ substituteTerm from to tt =
     C.TVar var -> case (elemIndex var from) of
       Just i -> C.TVar (to !! i) -- TODO make sure that from and to are the same length first
       Nothing -> tt
+    -- Replace scrutinee if in from list
+    C.TCase sc t def alts -> case (elemIndex sc from) of
+      -- TODO DRY this
+      Just i -> C.TCase (to !! i) t (substituteTerm' def) (map substituteAlt' alts)
+      Nothing -> C.TCase sc t (substituteTerm' def) (map substituteAlt' alts)
     -- Continue traversing nested terms
     C.TLam tt -> C.TLam (substituteTerm (map (+1) from) (map (+1) to) tt)
-    C.TCase sc t def alts -> C.TCase sc t (substituteTerm' def) (map substituteAlt' alts)
     C.TApp tt args -> C.TApp (substituteTerm' tt) (map substituteTerm' args)
     C.TLet tt1 tt2 -> C.TLet (substituteTerm' tt1) (substituteTerm' tt2)
     _ -> tt
