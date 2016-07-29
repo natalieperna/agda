@@ -141,6 +141,23 @@ dedupTerm env body =
     _ -> body
     where dedupTerm' = dedupTerm env
 
+dedupAlt :: CaseScope -> C.TAlt -> C.TAlt
+dedupAlt env alt =
+  case alt of
+    -- Add new constructor vars to scope
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars ar env) body)
+    -- Continue traversing nested terms
+    C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
+    C.TALit lit body -> C.TALit lit (dedupTerm' body)
+    where
+      dedupTerm' = dedupTerm env
+      -- TODO Handle missing bindVar patterns
+      bindVars n ((sc,[]):scope) = (sc+n,[n-1,n-2..0]):modifyCaseScope (+n) scope
+      bindVars n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
+
+modifyCaseScope :: (Int -> Int) -> CaseScope -> CaseScope
+modifyCaseScope f = map (\(sc, args) -> (f sc, map f args))
+
 substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
 -- Figure out what to pattern match against, then substitute
 substituteAlt [] to alt =
@@ -177,23 +194,6 @@ substituteTerm from to tt =
     where
       substituteTerm' = substituteTerm from to
       substituteAlt' = substituteAlt from to
-
-dedupAlt :: CaseScope -> C.TAlt -> C.TAlt
-dedupAlt env alt =
-  case alt of
-    -- Add new constructor vars to scope
-    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars ar env) body)
-    -- Continue traversing nested terms
-    C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
-    C.TALit lit body -> C.TALit lit (dedupTerm' body)
-    where
-      dedupTerm' = dedupTerm env
-      -- TODO Handle missing bindVar patterns
-      bindVars n ((sc,[]):scope) = (sc+n,[n-1,n-2..0]):modifyCaseScope (+n) scope
-      bindVars n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
-
-modifyCaseScope :: (Int -> Int) -> CaseScope -> CaseScope
-modifyCaseScope f = map (\(sc, args) -> (f sc, map f args))
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
