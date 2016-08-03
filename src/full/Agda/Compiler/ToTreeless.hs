@@ -121,11 +121,10 @@ ccToTreeless q cc = do
 inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
 inlineProjections q body = return $ dedupTerm [] body
 
--- Scope: [(case scrutinee, corresponding constructor arguments)]
--- TODO Add constructor name?
-type CaseScope = [(Int, [Int])]
+-- CaseMatch: (case scrutinee, Maybe (constructor name, constructor arguments))
+type CaseMatch = (Int, Maybe (QName, [Int]))
 
-dedupTerm :: CaseScope -> C.TTerm -> C.TTerm
+dedupTerm :: [CaseMatch] -> C.TTerm -> C.TTerm
 dedupTerm env body =
   -- TODO Right way to identify TTerms with nested TTerms (typeclass?)
   case body of
@@ -136,40 +135,56 @@ dedupTerm env body =
     C.TCase sc t def alts ->
       -- Check if scrutinee is already in scope
       case (lookup sc env) of
-        -- If in scope, then substitute
-        Just vars ->
+        -- If in scope with match then substitute
+        Just (Just match) ->
           C.TCase sc t
-          (dedupTerm env def)
-          (map (dedupAlt env) subs)
-          where subs = map (substituteAlt [] vars) alts
+          (dedupTerm' def)
+          (map dedupAlt' subs)
+          where subs = map (substituteAltSetup match) alts
+        -- If in scope without match then do nothing
+        Just (Nothing)  ->
+          C.TCase sc t
+          (dedupTerm' def)
+          (map dedupAlt' alts)
         -- Otherwise add to scope
         Nothing ->
           C.TCase sc t
-          (dedupTerm ((sc,[]):env) def)
-          (map (dedupAlt ((sc,[]):env)) alts)
+          (dedupTerm ((sc,Nothing):env) def)
+          (map (dedupAlt ((sc,Nothing):env)) alts)
     -- Continue traversing nested terms
     C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
     C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm' tt2)
     _ -> body
-    where dedupTerm' = dedupTerm env
+    where
+          dedupTerm' = dedupTerm env
+          dedupAlt' = dedupAlt env
 
-dedupAlt :: CaseScope -> C.TAlt -> C.TAlt
+dedupAlt :: [CaseMatch] -> C.TAlt -> C.TAlt
 dedupAlt env alt =
   case alt of
     -- Add new constructor vars to scope
-    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars ar env) body)
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars name ar env) body)
     -- Continue traversing nested terms
     C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
     C.TALit lit body -> C.TALit lit (dedupTerm' body)
     where
       dedupTerm' = dedupTerm env
       -- TODO Handle missing bindVar patterns
-      bindVars n ((sc,[]):scope) = (sc+n,[n-1,n-2..0]):modifyCaseScope (+n) scope
-      bindVars n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
+      bindVars name n ((sc,Nothing):scope) = (sc+n,Just (name, [n-1,n-2..0])):modifyCaseScope (+n) scope
+      bindVars name n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
 
-modifyCaseScope :: (Int -> Int) -> CaseScope -> CaseScope
-modifyCaseScope f = map (\(sc, args) -> (f sc, map f args))
+-- TODO make this function less ugly and repetitive
+modifyCaseScope :: (Int -> Int) -> [CaseMatch] -> [CaseMatch]
+modifyCaseScope f = map (modifyCaseScope' f)
+  where
+    modifyCaseScope' :: (Int -> Int) -> CaseMatch -> CaseMatch
+    modifyCaseScope' f (sc, Nothing) = (f sc, Nothing)
+    modifyCaseScope' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
 
+substituteAltSetup :: (QName, [Int]) -> C.TAlt -> C.TAlt
+substituteAltSetup (name, vars) alt = alt -- TODO
+
+{-
 substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
 -- Figure out what to pattern match against, then substitute
 substituteAlt [] to alt =
@@ -206,6 +221,7 @@ substituteTerm from to tt =
     where
       substituteTerm' = substituteTerm from to
       substituteAlt' = substituteAlt from to
+-}
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
