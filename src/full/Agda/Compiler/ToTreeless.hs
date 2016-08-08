@@ -153,12 +153,11 @@ dedupTerm env body =
         -}
         
         -- Otherwise add to scope
-        Nothing -> body -- TODO Don't use dedupAlt to add var bindings to environment, find them now.
-          {-
-          C.TCase sc t
-          (dedupTerm ((sc,Nothing):env) def)
-          (map (dedupAlt ((sc,Nothing):env)) alts)
-          -}
+        Nothing -> C.TCase sc t
+          (dedupTerm defEnv def)
+          (map (dedupTermHelper sc env) alts)
+          where
+            defEnv = (sc,Nothing):env
           
     -- Continue traversing nested terms
     C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
@@ -167,22 +166,20 @@ dedupTerm env body =
     where
           dedupTerm' = dedupTerm env
           --dedupAlt' = dedupAlt env
-{-
--- TODO Rewrite entirely
-dedupAlt :: [CaseMatch] -> C.TAlt -> C.TAlt
-dedupAlt env alt =
+
+-- Alt handler?
+dedupTermHelper :: Int -> [CaseMatch] -> C.TAlt -> C.TAlt
+dedupTermHelper sc env alt =
   case alt of
-    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars name ar env) body)
-     -- TODO variables to be bound should have already been identified in the dedupTerm case from where this was called
-    -- Continue traversing nested terms
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars name ar sc env) body)
     C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
     C.TALit lit body -> C.TALit lit (dedupTerm' body)
     where
       dedupTerm' = dedupTerm env
-      -- TODO Handle missing bindVar patterns
-      bindVars name n ((sc,Nothing):scope) = (sc+n,Just (name, [n-1,n-2..0])):modifyCaseScope (+n) scope
-      bindVars name n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
--}
+      bindVars name n sc env = (sc+n,Just (name, [n-1,n-2..0])):modifyCaseScope (+n) env
+
+      -- dedupAlt
+      -- bindVars name n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
 
 -- TODO make this function less ugly and repetitive
 modifyCaseScope :: (Int -> Int) -> [CaseMatch] -> [CaseMatch]
