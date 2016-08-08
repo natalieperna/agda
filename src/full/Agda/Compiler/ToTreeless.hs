@@ -124,21 +124,14 @@ dedupTerm env body =
         -- If in scope with match then substitute
         Just match -> case match of
           -- Previous match was a constructor alt
-          Just (name, args) -> body -- TODO find the TACon with matching name and replace vars with args appropriately and replace body, otherwise default
+          -- Find the TACon with matching name and replace body with args substituted term, otherwise replace body with default term
+          Just (name, args) -> caseReplacement name args alts def 
           -- Previous match was a default case
-          Nothing -> body -- TODO Add more info to environment to handle this. If the default case was followed before, then maybe the default case should be followed again, but we should first check that the other TAlts are the same as they were in the "match".
-        {-
-        Just (Just match) ->
-          C.TCase sc t
-          (dedupTerm' def)
-          (map dedupAlt' subs)
-          where subs = map (substituteAltSetup match) alts
-        -- If in scope without match then do nothing
-        Just (Nothing)  ->
-          C.TCase sc t
-          (dedupTerm' def)
-          (map dedupAlt' alts)
-        -}
+          -- TODO Add more info to environment to handle this. If the default case was followed before, then maybe the default case should be followed again, but we should first check that the other TAlts are the same as they were in the "match".
+          Nothing ->
+            C.TCase sc t
+            (dedupTerm' def)
+            (map dedupAlt' alts)
         
         -- Otherwise add to scope
         Nothing -> C.TCase sc t
@@ -153,9 +146,22 @@ dedupTerm env body =
     _ -> body
     where
           dedupTerm' = dedupTerm env
-          --dedupAlt' = dedupAlt env
+          dedupAlt' = dedupAlt env
 
--- Alt handler?
+caseReplacement :: QName -> [Int] -> [C.TAlt] -> C.TTerm -> C.TTerm
+caseReplacement name args alts def =
+  case (lookupTACon name alts) of
+    Just (C.TACon name ar body) ->  substituteTerm [ar-1,ar-2..0] (map (+ar) args) body
+    Nothing -> def
+
+lookupTACon :: QName -> [C.TAlt] -> Maybe C.TAlt
+lookupTACon _ [] = Nothing
+lookupTACon match ((alt@(C.TACon name ar body)):alts) = if (match == name)
+                                                      then Just alt
+                                                      else lookupTACon match alts
+lookupTACon match (_:alts) = lookupTACon match alts
+
+-- TODO Better name
 dedupTermHelper :: Int -> [CaseMatch] -> C.TAlt -> C.TAlt
 dedupTermHelper sc env alt =
   case alt of
@@ -166,8 +172,14 @@ dedupTermHelper sc env alt =
       dedupTerm' = dedupTerm env
       bindVars name n sc env = (sc+n,Just (name, [n-1,n-2..0])):modifyCaseScope (+n) env
 
-      -- dedupAlt
-      -- bindVars name n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
+dedupAlt :: [CaseMatch] -> C.TAlt -> C.TAlt
+dedupAlt env alt =
+  case alt of
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (modifyCaseScope (+ar) env) body)
+    C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
+    C.TALit lit body -> C.TALit lit (dedupTerm' body)
+    where
+      dedupTerm' = dedupTerm env
 
 -- TODO make this function less ugly and repetitive
 modifyCaseScope :: (Int -> Int) -> [CaseMatch] -> [CaseMatch]
@@ -176,6 +188,9 @@ modifyCaseScope f = map (modifyCaseScope' f)
     modifyCaseScope' :: (Int -> Int) -> CaseMatch -> CaseMatch
     modifyCaseScope' f (sc, Nothing) = (f sc, Nothing)
     modifyCaseScope' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
+
+substituteTerm :: [Int] -> [Int] -> C.TTerm -> C.TTerm
+substituteTerm _ _ = id -- TODO
 
 {-
 substituteAltSetup :: (QName, [Int]) -> C.TAlt -> C.TAlt
