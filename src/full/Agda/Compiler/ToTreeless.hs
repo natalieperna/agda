@@ -122,6 +122,7 @@ inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
 inlineProjections q body = return $ dedupTerm [] body
 
 -- CaseMatch: (case scrutinee, Maybe (constructor name, constructor arguments))
+-- (sc, Nothing) indicates that the scrutinee has been traced, but not yet its alternatives
 type CaseMatch = (Int, Maybe (QName, [Int]))
 
 dedupTerm :: [CaseMatch] -> C.TTerm -> C.TTerm
