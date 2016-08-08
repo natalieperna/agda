@@ -110,21 +110,24 @@ inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
 inlineProjections q body = return $ dedupTerm [] body
 
 -- CaseMatch: (case scrutinee, Maybe (constructor name, constructor arguments))
--- (sc, Nothing) indicates that the scrutinee has been traced, but not yet its alternatives -- TODO This should change though
+-- (sc, Nothing) indicates the default case
 type CaseMatch = (Int, Maybe (QName, [Int]))
 
 dedupTerm :: [CaseMatch] -> C.TTerm -> C.TTerm
 dedupTerm env body =
-  -- TODO Right way to identify TTerms with nested TTerms (typeclass?)
   case body of
     -- increment vars in scope to account for newly bound
     C.TLam tt -> C.TLam (dedupTerm (modifyCaseScope (+1) env) tt)
-    -- include scrutinee in def's/alts' scope, constructor args yet to be filled in
-    -- TODO Maybe shouldn't for def case?
     C.TCase sc t def alts ->
       -- Check if scrutinee is already in scope
       case (lookup sc env) of
         -- If in scope with match then substitute
+        Just match -> case match of
+          -- Previous match was a constructor alt
+          Just (name, args) -> body -- TODO find the TACon with matching name and replace vars with args appropriately and replace body, otherwise default
+          -- Previous match was a default case
+          Nothing -> body -- TODO Add more info to environment to handle this. If the default case was followed before, then maybe the default case should be followed again, but we should first check that the other TAlts are the same as they were in the "match".
+        {-
         Just (Just match) ->
           C.TCase sc t
           (dedupTerm' def)
@@ -135,23 +138,28 @@ dedupTerm env body =
           C.TCase sc t
           (dedupTerm' def)
           (map dedupAlt' alts)
+        -}
+        
         -- Otherwise add to scope
-        Nothing ->
+        Nothing -> body -- TODO Don't use dedupAlt to add var bindings to environment, find them now.
+          {-
           C.TCase sc t
           (dedupTerm ((sc,Nothing):env) def)
           (map (dedupAlt ((sc,Nothing):env)) alts)
+          -}
+          
     -- Continue traversing nested terms
     C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
     C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm (modifyCaseScope (+1) env) tt2)
     _ -> body
     where
           dedupTerm' = dedupTerm env
-          dedupAlt' = dedupAlt env
-
+          --dedupAlt' = dedupAlt env
+{-
+-- TODO Rewrite entirely
 dedupAlt :: [CaseMatch] -> C.TAlt -> C.TAlt
 dedupAlt env alt =
   case alt of
-    -- Add new constructor vars to scope
     C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars name ar env) body)
      -- TODO variables to be bound should have already been identified in the dedupTerm case from where this was called
     -- Continue traversing nested terms
@@ -162,6 +170,7 @@ dedupAlt env alt =
       -- TODO Handle missing bindVar patterns
       bindVars name n ((sc,Nothing):scope) = (sc+n,Just (name, [n-1,n-2..0])):modifyCaseScope (+n) scope
       bindVars name n scope = modifyCaseScope (+n) scope -- TODO am I missing something here, trace this case...
+-}
 
 -- TODO make this function less ugly and repetitive
 modifyCaseScope :: (Int -> Int) -> [CaseMatch] -> [CaseMatch]
@@ -171,10 +180,10 @@ modifyCaseScope f = map (modifyCaseScope' f)
     modifyCaseScope' f (sc, Nothing) = (f sc, Nothing)
     modifyCaseScope' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
 
+{-
 substituteAltSetup :: (QName, [Int]) -> C.TAlt -> C.TAlt
 substituteAltSetup (name, vars) alt = alt -- TODO
 
-{-
 substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
 -- Figure out what to pattern match against, then substitute
 substituteAlt [] to alt =
