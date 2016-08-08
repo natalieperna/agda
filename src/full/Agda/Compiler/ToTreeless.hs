@@ -110,7 +110,7 @@ inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
 inlineProjections q body = return $ dedupTerm [] body
 
 -- CaseMatch: (case scrutinee, Maybe (constructor name, constructor arguments))
--- (sc, Nothing) indicates that the scrutinee has been traced, but not yet its alternatives
+-- (sc, Nothing) indicates that the scrutinee has been traced, but not yet its alternatives -- TODO This should change though
 type CaseMatch = (Int, Maybe (QName, [Int]))
 
 dedupTerm :: [CaseMatch] -> C.TTerm -> C.TTerm
@@ -153,6 +153,7 @@ dedupAlt env alt =
   case alt of
     -- Add new constructor vars to scope
     C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars name ar env) body)
+     -- TODO variables to be bound should have already been identified in the dedupTerm case from where this was called
     -- Continue traversing nested terms
     C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
     C.TALit lit body -> C.TALit lit (dedupTerm' body)
