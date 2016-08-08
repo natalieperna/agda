@@ -154,7 +154,7 @@ dedupTerm env body =
           (map (dedupAlt ((sc,Nothing):env)) alts)
     -- Continue traversing nested terms
     C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
-    C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm' tt2)
+    C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm (modifyCaseScope (+1) env) tt2)
     _ -> body
     where
           dedupTerm' = dedupTerm env
