@@ -120,7 +120,7 @@ dedupTerm env body =
     C.TLam tt -> C.TLam (dedupTerm (modifyCaseScope (+1) env) tt)
     C.TCase sc t def alts ->
       -- Check if scrutinee is already in scope
-      case (lookup sc env) of
+      case lookup sc env of
         -- If in scope with match then substitute
         Just match -> case match of
           -- Previous match was a constructor alt
@@ -150,7 +150,7 @@ dedupTerm env body =
 
 caseReplacement :: QName -> [Int] -> [C.TAlt] -> C.TTerm -> C.TTerm
 caseReplacement name args alts def =
-  case (lookupTACon name alts) of
+  case lookupTACon name alts of
     Just (C.TACon name ar body) ->  substituteTerm [ar-1,ar-2..0] (map (+ar) args) body
     Nothing -> def
 
