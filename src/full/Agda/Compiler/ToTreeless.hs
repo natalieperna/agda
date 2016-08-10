@@ -190,7 +190,8 @@ modifyCaseScope f = map (modifyCaseScope' f)
     modifyCaseScope' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
 
 substituteTerm :: [Int] -> [Int] -> C.TTerm -> C.TTerm
-substituteTerm _ _ = id -- TODO
+substituteTerm (from:froms) (to:tos) = subst from (C.TVar to) . substituteTerm froms tos
+substituteTerm [] [] = id
 
 {-
 substituteAltSetup :: (QName, [Int]) -> C.TAlt -> C.TAlt
