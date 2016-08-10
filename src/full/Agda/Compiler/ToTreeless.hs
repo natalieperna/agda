@@ -163,7 +163,7 @@ dedupTerm env body =
 caseReplacement :: QName -> [Int] -> [C.TAlt] -> C.TTerm -> C.TTerm
 caseReplacement name args alts def =
   case lookupTACon name alts of
-    Just (C.TACon name ar body) ->  substituteTerm [ar-1,ar-2..0] (map (+ar) args) body
+    Just (C.TACon name ar body) ->  varReplace [ar-1,ar-2..0] (map (+ar) args) body
     Nothing -> def
 
 lookupTACon :: QName -> [C.TAlt] -> Maybe C.TAlt
@@ -201,51 +201,9 @@ modifyCaseScope f = map (modifyCaseScope' f)
     modifyCaseScope' f (sc, Nothing) = (f sc, Nothing)
     modifyCaseScope' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
 
-substituteTerm :: [Int] -> [Int] -> C.TTerm -> C.TTerm
-substituteTerm (from:froms) (to:tos) = subst from (C.TVar to) . substituteTerm froms tos
-substituteTerm [] [] = id
-
-{-
-substituteAltSetup :: (QName, [Int]) -> C.TAlt -> C.TAlt
-substituteAltSetup (name, vars) alt = alt -- TODO
-
-substituteAlt :: [Int] -> [Int] -> C.TAlt -> C.TAlt
--- Figure out what to pattern match against, then substitute
-substituteAlt [] to alt =
-  case alt of
-    -- Add new constructor vars to from
-    C.TACon name ar body -> C.TACon name ar (substituteTerm [ar-1,ar-2..0] (map (+ar) to) body)
-    -- TODO unmatched case
-substituteAlt from to alt =
-  case alt of
-    C.TACon name ar body -> C.TACon name ar (substituteTerm (map (+ar) from) (map (+ar) to) body)
-    C.TAGuard guard body -> C.TAGuard guard (substituteTerm' body)
-    C.TALit lit body -> C.TALit lit (substituteTerm' body)
-    where
-      substituteTerm' = substituteTerm from to
-      substituteAlt' = substituteAlt from to
-
-substituteTerm :: [Int] -> [Int] -> C.TTerm -> C.TTerm
-substituteTerm from to tt =
-  case tt of
-    -- Replace var if in from list
-    C.TVar var -> case (elemIndex var from) of
-      Just i -> C.TVar (to !! i) -- TODO make sure that from and to are the same length first
-      Nothing -> tt
-    -- Replace scrutinee if in from list
-    C.TCase sc t def alts -> case (elemIndex sc from) of
-      -- TODO DRY this
-      Just i -> C.TCase (to !! i) t (substituteTerm' def) (map substituteAlt' alts)
-      Nothing -> C.TCase sc t (substituteTerm' def) (map substituteAlt' alts)
-    -- Continue traversing nested terms
-    C.TLam tt -> C.TLam (substituteTerm (map (+1) from) (map (+1) to) tt)
-    C.TApp tt args -> C.TApp (substituteTerm' tt) (map substituteTerm' args)
-    C.TLet tt1 tt2 -> C.TLet (substituteTerm' tt1) (substituteTerm' tt2)
-    _ -> tt
-    where
-      substituteTerm' = substituteTerm from to
-      substituteAlt' = substituteAlt from to
--}
+varReplace :: [Int] -> [Int] -> C.TTerm -> C.TTerm
+varReplace (from:froms) (to:tos) = subst from (C.TVar to) . varReplace froms tos
+varReplace [] [] = id
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
