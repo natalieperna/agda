@@ -106,8 +106,9 @@ ccToTreeless q cc = do
   reportSDoc "treeless.opt.simpl" (30 + v) $ text "-- after third simplification"  $$ pbody body
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
-  body <- inlineProjections q body
-  reportSDoc "treeless.opt.inline" (30 + v) $ text "-- after projection inlining"  $$ pbody body
+  doSquashCases <- optSquashCases <$> commandLineOptions
+  body <- if (doSquashCases) then squashCases q body else return body
+  reportSDoc "treeless.opt.squash" (30 + v) $ text "-- after case squashing"  $$ pbody body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
@@ -118,8 +119,9 @@ ccToTreeless q cc = do
   setCompiledArgUse q used
   return body
 
-inlineProjections :: QName -> C.TTerm -> TCM C.TTerm
-inlineProjections q body = return $ dedupTerm [] body
+-- TODO Find the actual technical term for this type of compiler optimization
+squashCases :: QName -> C.TTerm -> TCM C.TTerm
+squashCases q body = return $ dedupTerm [] body
 
 -- CaseMatch: (case scrutinee, Maybe (constructor name, constructor arguments))
 -- (sc, Nothing) indicates the default case
