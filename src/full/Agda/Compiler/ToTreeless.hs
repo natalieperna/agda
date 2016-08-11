@@ -165,7 +165,7 @@ dedupTerm env body =
 caseReplacement :: QName -> [Int] -> [C.TAlt] -> C.TTerm -> C.TTerm
 caseReplacement name args alts def =
   case lookupTACon name alts of
-    Just (C.TACon name ar body) ->  varReplace [ar-1,ar-2..0] (map (+ar) args) body
+    Just (C.TACon name ar body) -> varReplace [ar-1,ar-2..0] args body
     Nothing -> def
 
 lookupTACon :: QName -> [C.TAlt] -> Maybe C.TAlt
