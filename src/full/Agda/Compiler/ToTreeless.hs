@@ -109,19 +109,21 @@ ccToTreeless q cc = do
 
 -- TODO Find the actual technical term for this type of compiler optimization
 squashCases :: QName -> C.TTerm -> TCM C.TTerm
-squashCases q body = return $ dedupTerm [] body
+squashCases q body = return $ dedupTerm (0, []) body
 
 -- (constructor name, constructor arguments)
 type ConWithArgs = (QName, [Int])
 -- CaseMatch: (case scrutinee, Maybe ConWithArgs)
 -- (sc, Nothing) indicates the default case
 type CaseMatch = (Int, Maybe ConWithArgs)
+-- (next variable index, cases in scope)
+type Env = (Int, [CaseMatch])
 
-dedupTerm :: [CaseMatch] -> C.TTerm -> C.TTerm
-dedupTerm env body =
+dedupTerm :: Env -> C.TTerm -> C.TTerm
+dedupTerm (n, env) body =
   case body of
     -- increment vars in scope to account for newly bound
-    C.TLam tt -> C.TLam (dedupTerm (modifyCaseScope (+1) env) tt)
+    C.TLam tt -> C.TLam (dedupTerm (n + 1, modifyCaseScope (+1) env) tt)
     C.TCase sc t def alts ->
       -- Check if scrutinee is already in scope
       case lookup sc env of
@@ -129,7 +131,7 @@ dedupTerm env body =
         Just existingCase -> case existingCase of
           -- Previous match was a constructor alt
           -- Find the TACon with matching name and replace body with args substituted term, otherwise replace body with default term
-          Just match -> caseReplacement match alts def 
+          Just match -> caseReplacement n match alts def
           -- Previous match was a default case
           -- TODO Add more info to environment to handle this. If the default case was followed before, then maybe the default case should be followed again, but we should first check that the other TAlts are the same as they were in the "match".
           Nothing ->
@@ -140,22 +142,22 @@ dedupTerm env body =
         -- Otherwise add to scope
         Nothing -> C.TCase sc t
           (dedupTerm defEnv def)
-          (map (dedupTermHelper sc env) alts)
+          (map (dedupTermHelper sc (n, env)) alts)
           where
-            defEnv = (sc,Nothing):env
+            defEnv = (n, (sc,Nothing):env)
           
     -- Continue traversing nested terms
     C.TApp tt args -> C.TApp (dedupTerm' tt) (map dedupTerm' args)
-    C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm (modifyCaseScope (+1) env) tt2)
+    C.TLet tt1 tt2 -> C.TLet (dedupTerm' tt1) (dedupTerm (n + 1, modifyCaseScope (+1) env) tt2)
     _ -> body
     where
-          dedupTerm' = dedupTerm env
-          dedupAlt' = dedupAlt env
+          dedupTerm' = dedupTerm (n, env)
+          dedupAlt' = dedupAlt (n, env)
 
-caseReplacement :: ConWithArgs -> [C.TAlt] -> C.TTerm -> C.TTerm
-caseReplacement (name, args) alts def =
+caseReplacement :: Int -> ConWithArgs -> [C.TAlt] -> C.TTerm -> C.TTerm
+caseReplacement n (name, args) alts def =
   case lookupTACon name alts of
-    Just (C.TACon name ar body) -> varReplace [ar-1,ar-2..0] args body
+    Just (C.TACon name ar body) -> varReplace [n+ar-1,n+ar-2..n] args body
     Nothing -> def
 
 lookupTACon :: QName -> [C.TAlt] -> Maybe C.TAlt
@@ -166,24 +168,24 @@ lookupTACon match ((alt@(C.TACon name ar body)):alts) = if (match == name)
 lookupTACon match (_:alts) = lookupTACon match alts
 
 -- TODO Better name
-dedupTermHelper :: Int -> [CaseMatch] -> C.TAlt -> C.TAlt
-dedupTermHelper sc env alt =
+dedupTermHelper :: Int -> Env -> C.TAlt -> C.TAlt
+dedupTermHelper sc (n, env) alt =
   case alt of
-    C.TACon name ar body -> C.TACon name ar (dedupTerm (bindVars name ar sc env) body)
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (n + ar, bindVars name ar sc env) body)
     C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
     C.TALit lit body -> C.TALit lit (dedupTerm' body)
     where
-      dedupTerm' = dedupTerm env
-      bindVars name n sc env = (sc+n,Just (name, [n-1,n-2..0])):modifyCaseScope (+n) env
+      dedupTerm' = dedupTerm (n, env)
+      bindVars name ar sc env = (sc+ar,Just (name, [ar-1,ar-2..0])):modifyCaseScope (+ar) env
 
-dedupAlt :: [CaseMatch] -> C.TAlt -> C.TAlt
-dedupAlt env alt =
+dedupAlt :: Env -> C.TAlt -> C.TAlt
+dedupAlt (n, env) alt =
   case alt of
-    C.TACon name ar body -> C.TACon name ar (dedupTerm (modifyCaseScope (+ar) env) body)
+    C.TACon name ar body -> C.TACon name ar (dedupTerm (n + ar, modifyCaseScope (+ar) env) body)
     C.TAGuard guard body -> C.TAGuard guard (dedupTerm' body)
     C.TALit lit body -> C.TALit lit (dedupTerm' body)
     where
-      dedupTerm' = dedupTerm env
+      dedupTerm' = dedupTerm (n, env)
 
 -- TODO make this function less ugly and repetitive
 modifyCaseScope :: (Int -> Int) -> [CaseMatch] -> [CaseMatch]
