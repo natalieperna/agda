@@ -111,9 +111,11 @@ ccToTreeless q cc = do
 squashCases :: QName -> C.TTerm -> TCM C.TTerm
 squashCases q body = return $ dedupTerm [] body
 
--- CaseMatch: (case scrutinee, Maybe (constructor name, constructor arguments))
+-- (constructor name, constructor arguments)
+type ConWithArgs = (QName, [Int])
+-- CaseMatch: (case scrutinee, Maybe ConWithArgs)
 -- (sc, Nothing) indicates the default case
-type CaseMatch = (Int, Maybe (QName, [Int]))
+type CaseMatch = (Int, Maybe ConWithArgs)
 
 dedupTerm :: [CaseMatch] -> C.TTerm -> C.TTerm
 dedupTerm env body =
@@ -124,10 +126,10 @@ dedupTerm env body =
       -- Check if scrutinee is already in scope
       case lookup sc env of
         -- If in scope with match then substitute
-        Just match -> case match of
+        Just existingCase -> case existingCase of
           -- Previous match was a constructor alt
           -- Find the TACon with matching name and replace body with args substituted term, otherwise replace body with default term
-          Just (name, args) -> caseReplacement name args alts def 
+          Just match -> caseReplacement match alts def 
           -- Previous match was a default case
           -- TODO Add more info to environment to handle this. If the default case was followed before, then maybe the default case should be followed again, but we should first check that the other TAlts are the same as they were in the "match".
           Nothing ->
@@ -150,8 +152,8 @@ dedupTerm env body =
           dedupTerm' = dedupTerm env
           dedupAlt' = dedupAlt env
 
-caseReplacement :: QName -> [Int] -> [C.TAlt] -> C.TTerm -> C.TTerm
-caseReplacement name args alts def =
+caseReplacement :: ConWithArgs -> [C.TAlt] -> C.TTerm -> C.TTerm
+caseReplacement (name, args) alts def =
   case lookupTACon name alts of
     Just (C.TACon name ar body) -> varReplace [ar-1,ar-2..0] args body
     Nothing -> def
