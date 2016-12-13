@@ -169,7 +169,7 @@ dedupTerm (n, env) body =
 caseReplacement :: Int -> ConWithArgs -> [C.TAlt] -> C.TTerm -> C.TTerm
 caseReplacement n (name, args) alts def =
   case lookupTACon name alts of
-    Just (C.TACon name ar body) -> varReplace [n+ar-1,n+ar-2..n] args body
+    Just (C.TACon name ar body) -> varReplace [0..ar-1] (reverse args) body
     Nothing -> def
 
 lookupTACon :: QName -> [C.TAlt] -> Maybe C.TAlt
