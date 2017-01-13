@@ -51,6 +51,8 @@ import qualified Agda.Utils.Pretty as P
 #include "undefined.h"
 import Agda.Utils.Impossible
 
+import Debug.Trace
+
 prettyPure :: P.Pretty a => a -> TCM Doc
 prettyPure = return . P.pretty
 
@@ -201,7 +203,7 @@ varReplace [] [] = id
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
-  substTerm t `runReaderT` initCCEnv
+  substTerm [] t `runReaderT` initCCEnv
 
 alwaysInline :: QName -> TCM Bool
 alwaysInline q = do
@@ -255,7 +257,7 @@ casetree cc = do
     CC.Fail -> return C.tUnreachable
     CC.Done xs v -> lambdasUpTo (length xs) $ do
         v <- lift $ putAllowedReductions [ProjectionReductions, CopatternReductions] $ normalise v
-        substTerm v
+        substTerm [] v
     CC.Case (Arg _ n) (CC.Branches True conBrs _ _) -> lambdasUpTo n $ do
       mkRecord =<< traverse casetree (CC.content <$> conBrs)
     CC.Case (Arg _ n) (CC.Branches False conBrs litBrs catchAll) -> lambdasUpTo (n + 1) $ do
@@ -390,25 +392,25 @@ recConFromProj q = do
 --   TTerm de Bruijn indexes may differ. This is due to additional let-bindings
 --   introduced by the catch-all machinery, so we need to lookup casetree de bruijn
 --   indices in the environment as well.
-substTerm :: I.Term -> CC C.TTerm
-substTerm term = normaliseStatic term >>= \ term ->
+substTerm :: [I.QName] -> I.Term -> CC C.TTerm
+substTerm inlinedAncestors term = normaliseStatic term >>= \ term ->
   case I.ignoreSharing $ I.unSpine term of
     I.Var ind es -> do
       ind' <- lookupIndex ind <$> asks ccCxt
       let args = fromMaybe __IMPOSSIBLE__ $ I.allApplyElims es
-      C.mkTApp (C.TVar ind') <$> substArgs args
+      C.mkTApp (C.TVar ind') <$> substArgs inlinedAncestors args
     I.Lam _ ab ->
       C.TLam <$>
         local (\e -> e { ccCxt = 0 : (shift 1 $ ccCxt e) })
-          (substTerm $ I.unAbs ab)
+          (substTerm inlinedAncestors (I.unAbs ab))
     I.Lit l -> return $ C.TLit l
     I.Level _ -> return C.TUnit
     I.Def q es -> do
       let args = fromMaybe __IMPOSSIBLE__ $ I.allApplyElims es
-      maybeInlineDef q args
+      maybeInlineDef inlinedAncestors q args
     I.Con c args -> do
         c' <- lift $ canonicalName $ I.conName c
-        C.mkTApp (C.TCon c') <$> substArgs args
+        C.mkTApp (C.TCon c') <$> substArgs inlinedAncestors args
     I.Shared _ -> __IMPOSSIBLE__ -- the ignoreSharing fun should already take care of this
     I.Pi _ _ -> return C.TUnit
     I.Sort _  -> return C.TSort
@@ -421,31 +423,37 @@ normaliseStatic v@(I.Def f es) = lift $ do
   if static then normalise v else pure v
 normaliseStatic v = pure v
 
-maybeInlineDef :: I.QName -> I.Args -> CC C.TTerm
-maybeInlineDef q vs =
-  ifM (lift $ alwaysInline q) doinline $ do
+maybeInlineDef :: [I.QName] -> I.QName -> I.Args -> CC C.TTerm
+maybeInlineDef inlinedAncestors q vs =
+  ifM (lift $ alwaysInline q) (doinline inlinedAncestors) $ do
     def <- lift $ getConstInfo q
     doInlineProj <- optInlineProj <$> lift commandLineOptions
     case theDef def of
       def'@Function{ funInline = inline }
-        | inline    -> doinline
-        | isProperProjection def' && doInlineProj -> do
+        | inline    -> doinline []
+        | isProperProjection def' && doInlineProj -- && q `notElem` inlinedAncestors ->
+        -> do
             lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
-            doinline
-        | otherwise -> do
-        _ <- lift $ toTreeless' q
-        used <- lift $ getCompiledArgUse q
-        let substUsed False _   = pure C.TErased
-            substUsed True  arg = substArg arg
-        C.mkTApp (C.TDef q) <$> sequence [ substUsed u arg | (arg, u) <- zip vs $ used ++ repeat True ]
-      _ -> C.mkTApp (C.TDef q) <$> substArgs vs
+            doinline inlinedAncestors
+        | otherwise -> defaultCase
+      _ -> C.mkTApp (C.TDef q) <$> substArgs inlinedAncestors vs
   where
-    doinline = C.mkTApp <$> inline q <*> substArgs vs
+    doinline qs = if (q `elem` qs)
+                then trace ("BAD STUFF: " ++ show (q : qs)) defaultCase
+                else C.mkTApp <$> inline q <*> substArgs (q : qs) vs
+    -- doinline qs = C.mkTApp <$> inline q <*> substArgs (q : qs) vs
     inline q = lift $ toTreeless' q
+    defaultCase = do
+            _ <- lift $ toTreeless' q
+            used <- lift $ getCompiledArgUse q
+            let substUsed False _   = pure C.TErased
+                substUsed True  arg = substArg inlinedAncestors arg
+            C.mkTApp (C.TDef q) <$> sequence [ substUsed u arg | (arg, u) <- zip vs $ used ++ repeat True ]
 
-substArgs :: [Arg I.Term] -> CC [C.TTerm]
-substArgs = traverse substArg
+substArgs :: [I.QName] -> [Arg I.Term] -> CC [C.TTerm]
+substArgs = traverse . substArg
 
-substArg :: Arg I.Term -> CC C.TTerm
-substArg x | isIrrelevant x = return C.TErased
-           | otherwise      = substTerm (unArg x)
+substArg :: [I.QName] -> Arg I.Term -> CC C.TTerm
+substArg inlinedAncestors x | isIrrelevant x = return C.TErased
+                            | otherwise      = substTerm inlinedAncestors (unArg x)
+           
