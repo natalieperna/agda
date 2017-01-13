@@ -387,7 +387,7 @@ recConFromProj q = do
 
 -- | Translate the actual Agda terms, with an environment of all the bound variables
 --   from patternmatching. Agda terms are in de Bruijn indices, but the expected
---   TTerm de bruijn indexes may differ. This is due to additional let-bindings
+--   TTerm de Bruijn indexes may differ. This is due to additional let-bindings
 --   introduced by the catch-all machinery, so we need to lookup casetree de bruijn
 --   indices in the environment as well.
 substTerm :: I.Term -> CC C.TTerm
