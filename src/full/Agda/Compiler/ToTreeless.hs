@@ -430,7 +430,7 @@ recConFromProj q = do
 --   TTerm de Bruijn indexes may differ. This is due to additional let-bindings
 --   introduced by the catch-all machinery, so we need to lookup casetree de bruijn
 --   indices in the environment as well.
-substTerm :: [I.QName] -> I.Term -> CC C.TTerm
+substTerm :: ProjInfo -> I.Term -> CC C.TTerm
 substTerm inlinedAncestors term = normaliseStatic term >>= \ term ->
   case I.ignoreSharing $ I.unSpine term of
     I.Var ind es -> do
@@ -461,7 +461,9 @@ normaliseStatic v@(I.Def f es) = lift $ do
   if static then normalise v else pure v
 normaliseStatic v = pure v
 
-maybeInlineDef :: [I.QName] -> I.QName -> I.Args -> CC C.TTerm
+type ProjInfo = [(I.QName, (I.Args, Definition))]
+
+maybeInlineDef :: ProjInfo -> I.QName -> I.Args -> CC C.TTerm
 maybeInlineDef inlinedAncestors q vs =
   ifM (lift $ alwaysInline q) (doinline inlinedAncestors) $ do
     lift $ cacheTreeless q
@@ -477,10 +479,16 @@ maybeInlineDef inlinedAncestors q vs =
         | otherwise -> defaultCase
       _ -> C.mkTApp (C.TDef q) <$> substArgs inlinedAncestors vs
   where
-    doinline qs = if (q `elem` qs)
-                then trace ("BAD STUFF: " ++ show (q : qs)) defaultCase
-                else C.mkTApp <$> inline q <*> substArgs (q : qs) vs
-    -- doinline qs = C.mkTApp <$> inline q <*> substArgs (q : qs) vs
+    updatedAncestors = do
+      def <- lift $ getConstInfo q
+      return $ (q, (vs, def)) : inlinedAncestors
+    doinline inlinedAncestors = do
+      ancestors <- updatedAncestors
+      case (q `lookup` inlinedAncestors) of
+        Nothing -> C.mkTApp <$> inline q <*> substArgs ancestors vs
+        Just _ -> trace ("BAD STUFF: " ++ unlines (map show ancestors)) defaultCase
+    -- doinline qs = C.mkTApp <$> inline q <*> substArgs ancestors vs
+    inline :: QName -> CC C.TTerm
     inline q = lift $ toTreeless' q
     defaultCase = do
             _ <- lift $ toTreeless' q
@@ -489,10 +497,10 @@ maybeInlineDef inlinedAncestors q vs =
                 substUsed True  arg = substArg inlinedAncestors arg
             C.mkTApp (C.TDef q) <$> sequence [ substUsed u arg | (arg, u) <- zip vs $ used ++ repeat True ]
 
-substArgs :: [I.QName] -> [Arg I.Term] -> CC [C.TTerm]
+substArgs :: ProjInfo -> [Arg I.Term] -> CC [C.TTerm]
 substArgs = traverse . substArg
 
-substArg :: [I.QName] -> Arg I.Term -> CC C.TTerm
+substArg :: ProjInfo -> Arg I.Term -> CC C.TTerm
 substArg inlinedAncestors x | erasable x     = return C.TErased
                             | otherwise      = substTerm inlinedAncestors (unArg x)
   where
