@@ -172,6 +172,7 @@ caseReplacement :: Int -> ConWithArgs -> [C.TAlt] -> C.TTerm -> C.TTerm
 caseReplacement n (name, args) alts def =
   case lookupTACon name alts of
     Just (C.TACon name ar body) -> varReplace [0..ar-1] (reverse args) body
+    Just _ -> def -- TODO does this make sense?
     Nothing -> def
 
 lookupTACon :: QName -> [C.TAlt] -> Maybe C.TAlt
@@ -212,6 +213,8 @@ modifyCaseScope f = map (modifyCaseScope' f)
 varReplace :: [Int] -> [Int] -> C.TTerm -> C.TTerm
 varReplace (from:froms) (to:tos) = subst from (C.TVar to) . varReplace froms tos
 varReplace [] [] = id
+-- TODO handle these
+varReplace _ _ = error "Mismatched arguments"
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
 closedTermToTreeless t = do
