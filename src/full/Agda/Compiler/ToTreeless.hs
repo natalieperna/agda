@@ -51,7 +51,7 @@ import qualified Agda.Utils.Pretty as P
 #include "undefined.h"
 import Agda.Utils.Impossible
 
-import Debug.Trace
+--import Debug.Trace
 
 prettyPure :: P.Pretty a => a -> TCM Doc
 prettyPure = return . P.pretty
@@ -489,7 +489,7 @@ maybeInlineDef inlinedAncestors q vs =
       ancestors <- updatedAncestors
       case (q `lookup` inlinedAncestors) of
         Nothing -> C.mkTApp <$> inline q <*> substArgs ancestors vs
-        Just _ -> trace ("BAD STUFF: " ++ unlines (map show ancestors)) defaultCase
+        Just _ -> defaultCase --trace ("BAD STUFF: " ++ unlines (map show ancestors)) defaultCase
     -- doinline qs = C.mkTApp <$> inline q <*> substArgs ancestors vs
     inline :: QName -> CC C.TTerm
     inline q = lift $ toTreeless' q
