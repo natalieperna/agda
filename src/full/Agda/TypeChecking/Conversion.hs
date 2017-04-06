@@ -160,6 +160,15 @@ compareTerm cmp a u v = do
                              | otherwise = (assign rid y vs u, assign dir x us v)
         (MetaV x us, _) -> unlessSubtyping $ assign dir x us v `orelse` fallback
         (_, MetaV y vs) -> unlessSubtyping $ assign rid y vs u `orelse` fallback
+        (Def f [], Def f' []) | f == f' -> return ()
+        (Def f es, Def f' es') | f == f' -> unlessSubtyping $ do
+                def <- getConstInfo f
+                -- To compute the type @a@ of a projection-like @f@,
+                -- we have to infer the type of its first argument.
+                if projectionArgs (theDef def) <= 0
+                  then do pol <- getPolarity' cmp f
+                          compareElims pol (defType def) (Def f []) es es' `orelse` fallback
+                  else fallback
         _               -> fallback
   where
     assign dir x es v = do
