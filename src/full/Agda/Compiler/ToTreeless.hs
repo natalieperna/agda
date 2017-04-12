@@ -274,7 +274,7 @@ casetree cc = do
       -- Issue 2469: Body context size (`length xs`) may be smaller than current context size
       -- if some arguments are not used in the body.
       v <- lift (putAllowedReductions [ProjectionReductions, CopatternReductions] $ normalise v)
-      substTerm v
+      substTerm [] v
     CC.Case _ (CC.Branches True _ _ Just{}) -> __IMPOSSIBLE__
       -- Andreas, 2016-06-03, issue #1986: Ulf: "no catch-all for copatterns!"
       -- lift $ do
@@ -473,9 +473,9 @@ maybeInlineDef inlinedAncestors q vs =
     def <- lift $ getConstInfo q
     doInlineProj <- optInlineProj <$> lift commandLineOptions
     case theDef def of
-      def'@Function{ funInline = inline }
-        | inline    -> doinline []
-        | isProperProjection def' && doInlineProj -- && q `notElem` inlinedAncestors ->
+      fun@Function{}
+        | fun ^. funInline -> doinline []
+        | isProperProjection fun && doInlineProj -- && q `notElem` inlinedAncestors ->
         -> do
             lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
             doinline inlinedAncestors
