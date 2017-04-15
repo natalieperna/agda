@@ -20,6 +20,7 @@ data Decl = TypeDecl Name [TyVarBind] Type
           | DataDecl DataOrNew Name [TyVarBind] [ConDecl] [Deriving]
           | TypeSig [Name] Type
           | FunBind [Match]
+          | PatBind Pat Rhs (Maybe Binds)
           | FakeDecl String
   deriving (Eq)
 

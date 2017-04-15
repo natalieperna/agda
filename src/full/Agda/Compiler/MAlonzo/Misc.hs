@@ -114,6 +114,10 @@ hsInt n = HS.Lit (HS.Int n)
 hsTypedInt :: Integral a => a -> HS.Exp
 hsTypedInt n = HS.ExpTypeSig (HS.Lit (HS.Int $ fromIntegral n)) (HS.TyCon (hsName "Integer"))
 
+hsPLet :: HS.Pat -> HS.Exp -> HS.Exp -> HS.Exp
+hsPLet p e b =
+  HS.Let (HS.BDecls [HS.PatBind p (HS.UnGuardedRhs e) emptyBinds]) b
+
 hsLet :: HS.Name -> HS.Exp -> HS.Exp -> HS.Exp
 hsLet x e b =
   HS.Let (HS.BDecls [HS.FunBind [HS.Match x [] (HS.UnGuardedRhs e) emptyBinds]]) b

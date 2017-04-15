@@ -5,4 +5,4 @@ import qualified Agda.Utils.Haskell.Syntax as HS
 import Agda.Syntax.Treeless (TTerm)
 import Agda.TypeChecking.Monad (TCM)
 
-closedTerm :: TTerm -> TCM HS.Exp
+closedTerm :: Bool -> TTerm -> TCM HS.Exp

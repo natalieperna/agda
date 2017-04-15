@@ -212,7 +212,7 @@ primBody s = maybe unimplemented (either (hsVarUQ . HS.Ident) id <$>) $
   -- Trust me
   , ("primTrustMe"       , Right <$> do
        refl <- primRefl
-       closedTerm =<< (closedTermToTreeless $ lam "a" (lam "A" (lam "x" (lam "y" refl)))))
+       closedTerm False =<< (closedTermToTreeless $ lam "a" (lam "A" (lam "x" (lam "y" refl)))))
   ]
   where
   x |-> s = (x, Left <$> s)
