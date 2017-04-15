@@ -110,6 +110,7 @@ data GHCOptions = GHCOptions
   { optGhcCompile :: Bool
   , optGhcCallGhc :: Bool
   , optGhcFlags   :: [String]
+  , optGhcGeneratePatternLet :: Bool
   }
 
 defaultGHCOptions :: GHCOptions
@@ -117,6 +118,7 @@ defaultGHCOptions = GHCOptions
   { optGhcCompile = False
   , optGhcCallGhc = True
   , optGhcFlags   = []
+  , optGhcGeneratePatternLet = False
   }
 
 ghcCommandLineFlags :: [OptDescr (Flag GHCOptions)]
@@ -127,11 +129,14 @@ ghcCommandLineFlags =
                     "don't call GHC, just write the GHC Haskell files."
     , Option []     ["ghc-flag"] (ReqArg ghcFlag "GHC-FLAG")
                     "give the flag GHC-FLAG to GHC"
+    , Option []     ["ghc-generate-pattern-let"] (NoArg genPLet)
+                    "make the GHC backend generate pattern lets"
     ]
   where
     enable      o = pure o{ optGhcCompile = True }
     dontCallGHC o = pure o{ optGhcCallGhc = False }
     ghcFlag f   o = pure o{ optGhcFlags   = optGhcFlags o ++ [f] }
+    genPLet     o = pure o{ optGhcGeneratePatternLet = True }
 
 --- Top-level compilation ---
 
@@ -174,7 +179,7 @@ ghcPostModule _ _ _ _ defs = do
   hasMainFunction <$> curIF
 
 ghcCompileDef :: GHCOptions -> GHCModuleEnv -> Definition -> TCM [HS.Decl]
-ghcCompileDef _ = definition
+ghcCompileDef o = definition (optGhcGeneratePatternLet o)
 
 -- Compilation ------------------------------------------------------------
 
@@ -225,18 +230,18 @@ imports = (hsImps ++) <$> imps where
 --   flat x = x
 -- @
 
-definition :: Maybe CoinductionKit -> Definition -> TCM [HS.Decl]
+definition :: Bool -> Maybe CoinductionKit -> Definition -> TCM [HS.Decl]
 -- ignore irrelevant definitions
 {- Andreas, 2012-10-02: Invariant no longer holds
-definition kit (Defn Forced{}  _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
-definition kit (Defn UnusedArg _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
-definition kit (Defn NonStrict _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
+definition _ kit (Defn Forced{}  _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
+definition _ kit (Defn UnusedArg _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
+definition _ kit (Defn NonStrict _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
 -}
-definition kit Defn{defArgInfo = info, defName = q} | isIrrelevant info = do
+definition _ kit Defn{defArgInfo = info, defName = q} | isIrrelevant info = do
   reportSDoc "compile.ghc.definition" 10 $
     text "Not compiling" <+> prettyTCM q <> text "."
   return []
-definition kit Defn{defName = q, defType = ty, theDef = d} = do
+definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
   reportSDoc "compile.ghc.definition" 10 $ vcat
     [ text "Compiling" <+> prettyTCM q <> text ":"
     , nest 2 $ text (show d)
@@ -346,8 +351,8 @@ definition kit Defn{defName = q, defType = ty, theDef = d} = do
     used <- getCompiledArgUse q
     let dostrip = any not used
 
-    e <- if dostrip then closedTerm (stripUnusedArguments used treeless)
-                    else closedTerm treeless
+    e <- if dostrip then closedTerm genPLet (stripUnusedArguments used treeless)
+                    else closedTerm genPLet treeless
     let (ps, b) = lamView e
         lamView e =
           case stripTopCoerce e of
@@ -362,7 +367,7 @@ definition kit Defn{defName = q, defType = ty, theDef = d} = do
         funbind f ps b = HS.FunBind [HS.Match f ps (HS.UnGuardedRhs b) emptyBinds]
 
     -- The definition of the non-stripped function
-    (ps0, _) <- lamView <$> closedTerm (foldr ($) T.TErased $ replicate (length used) T.TLam)
+    (ps0, _) <- lamView <$> closedTerm genPLet (foldr ($) T.TErased $ replicate (length used) T.TLam)
     let b0 = foldl HS.App (hsVarUQ $ duname q) [ hsVarUQ x | (~(HS.PVar x), True) <- zip ps0 used ]
 
     return $ if dostrip
@@ -403,6 +408,7 @@ constructorCoverageCode q np cs hsTy hsCons = do
 data CCEnv = CCEnv
   { ccNameSupply :: NameSupply  -- ^ Supply of fresh names
   , ccCxt        :: CCContext   -- ^ Names currently in scope
+  , ccGenPLet    :: Bool        -- ^ From optGhcGeneratePatternLet
   }
 
 type NameSupply = [HS.Name]
@@ -415,10 +421,11 @@ mapContext :: (CCContext -> CCContext) -> CCEnv -> CCEnv
 mapContext f e = e { ccCxt = f (ccCxt e) }
 
 -- | Initial environment for expression generation.
-initCCEnv :: CCEnv
-initCCEnv = CCEnv
+initCCEnv :: Bool -> CCEnv
+initCCEnv genPLet = CCEnv
   { ccNameSupply = map (ihname "v") [0..]  -- DON'T CHANGE THESE NAMES!
   , ccCxt        = []
+  , ccGenPLet    = genPLet
   }
 
 -- | Term variables are de Bruijn indices.
@@ -464,14 +471,14 @@ checkCover q ty n cs hsCons = do
                                 (HS.UnGuardedRhs rhs) emptyBinds]
          ]
 
-closedTerm :: T.TTerm -> TCM HS.Exp
-closedTerm v = hsCast <$> term v `runReaderT` initCCEnv
+closedTerm :: Bool -> T.TTerm -> TCM HS.Exp
+closedTerm genPLet v = hsCast <$> term v `runReaderT` initCCEnv genPLet
 
 -- | Extract Agda term to Haskell expression.
 --   Erased arguments are extracted as @()@.
 --   Types are extracted as @()@.
 term :: T.TTerm -> CC HS.Exp
-term tm0 = case tm0 of
+term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
   T.TVar i -> do
     x <- lookupIndex i <$> asks ccCxt
     return $ hsVarUQ x
@@ -511,6 +518,16 @@ term tm0 = case tm0 of
     (nm:_) <- asks ccNameSupply
     intros 1 $ \ [x] ->
       hsLambda [HS.PVar x] <$> term at
+  TLet t1 (TCase 0 ct def [TACon c n t2]) | genPLet -> do
+    t1' <- term t1
+    intros 1 $ \[x] -> do
+      intros n $ \ xs -> do
+        erased <- lift $ getErasedConArgs c
+        hConNm <- lift $ conhqn c
+        let p = HS.PAsPat x $ HS.PApp hConNm $ map HS.PVar [ x | (x, False) <- zip xs erased ]
+        t2' <- term t2
+        return $ hsPLet p (hsCast t1') t2'
+
   T.TLet t1 t2 -> do
     t1' <- term t1
     intros 1 $ \[x] -> do
