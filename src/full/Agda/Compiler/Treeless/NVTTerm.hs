@@ -9,6 +9,10 @@ import Control.Monad.State
 import Data.Monoid
 import qualified Data.Map as Map
 import Data.List (elemIndex)
+import Data.IntSet (IntSet)
+import qualified Data.IntSet as IntSet
+import Data.IntMap (IntMap)
+import qualified Data.IntMap as IntMap
 
 import Agda.Syntax.Common
 import Agda.Syntax.Treeless
@@ -28,7 +32,7 @@ import Data.Word (Word64)
 import Agda.Utils.Impossible
 #include "undefined.h"
 
-newtype Var = V Int deriving (Eq, Ord, Show)
+newtype Var = V {unV :: Int} deriving (Eq, Ord, Show)
 
 data NVTTerm
   = NVTVar Var
@@ -45,14 +49,48 @@ data NVTTerm
   | NVTSort
   | NVTErased
   | NVTError TError
-  deriving (Show, Eq, Ord)
+  deriving (Show)
 
 
 data NVTAlt
   = NVTACon QName [Var] NVTTerm
   | NVTAGuard NVTTerm NVTTerm
   | NVTALit Literal NVTTerm
-  deriving (Show, Eq, Ord)
+  deriving (Show)
+
+instance Eq NVTTerm where (==) = eqNVTTerm
+
+eqNVTTerm :: NVTTerm -> NVTTerm -> Bool
+eqNVTTerm = eqT IntMap.empty
+  where
+    eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool
+    eqT m (NVTVar (V i)) (NVTVar (V j)) = case IntMap.lookup i m of
+      Nothing -> i == j
+      Just j' -> j == j'
+    eqT m (NVTPrim p) (NVTPrim p') = p == p'
+    eqT m (NVTDef n) (NVTDef n') = n == n'
+    eqT m (NVTApp f ts) (NVTApp f' ts') = and $ zipWith (eqT m) (f : ts) (f' : ts')
+    eqT m (NVTLam (V i) b) (NVTLam (V j) b') = eqT (IntMap.insert i j m) b b'
+    eqT m (NVTLit l) (NVTLit l') = l == l'
+    eqT m (NVTCon n) (NVTCon n') = n == n'
+    eqT m (NVTLet (V i) e b) (NVTLet (V j) e' b') = eqT m e e' && eqT (IntMap.insert i j m) b b'
+    eqT m (NVTCase (V i) cty dft alts) (NVTCase (V j) cty' dft' alts') =
+      (case IntMap.lookup i m of Nothing -> i == j; Just j' -> j == j') &&
+      and (zipWith (eqA m) alts alts')
+    eqT m NVTUnit NVTUnit = True
+    eqT m NVTSort NVTSort = True
+    eqT m NVTErased NVTErased = True
+    eqT m (NVTError t) (NVTError t') = t == t'
+    eqT _ _ _ = False
+
+    eqA :: IntMap Int -> NVTAlt -> NVTAlt -> Bool
+    eqA m (NVTACon c vs b) (NVTACon c' vs' b') = let
+        m' = IntMap.fromList (zip (map unV vs) (map unV vs')) `IntMap.union` m
+      in eqT m' b b'
+    eqA m (NVTAGuard g b) (NVTAGuard g' b') = eqT m g g' && eqT m b b'
+    eqA m (NVTALit lit b) (NVTALit lit' b') = lit == lit' && eqT m b b'
+    eqA _ _ _ = False
+
 
 type U = State Int
 
@@ -119,4 +157,48 @@ toTAlt vs (NVTACon name cvars b) =
   TACon name (length cvars) $ toTTerm (reverse cvars ++ vs) b
 toTAlt vs (NVTAGuard g b) = TAGuard (toTTerm vs g) (toTTerm vs b)
 toTAlt vs (NVTALit lit b) = TALit lit (toTTerm vs b)
+
+
+fvarsNVTTerm :: NVTTerm -> IntSet
+fvarsNVTTerm (NVTVar (V i)) = IntSet.singleton i
+fvarsNVTTerm (NVTPrim p) = IntSet.empty
+fvarsNVTTerm (NVTDef name) = IntSet.empty
+fvarsNVTTerm (NVTApp f ts) = IntSet.unions $ fvarsNVTTerm f : map fvarsNVTTerm ts
+fvarsNVTTerm (NVTLam (V i) b) = IntSet.delete i $ fvarsNVTTerm b
+fvarsNVTTerm (NVTLit lit) = IntSet.empty
+fvarsNVTTerm (NVTCon c) = IntSet.empty
+fvarsNVTTerm (NVTLet (V i) e b) = fvarsNVTTerm e `IntSet.union` IntSet.delete i (fvarsNVTTerm b)
+fvarsNVTTerm (NVTCase (V i) caseType dft alts) = IntSet.unions $ IntSet.insert i (fvarsNVTTerm dft) : map fvarsNVTAlt alts
+fvarsNVTTerm NVTUnit = IntSet.empty
+fvarsNVTTerm NVTSort = IntSet.empty
+fvarsNVTTerm NVTErased = IntSet.empty
+fvarsNVTTerm (NVTError t) = IntSet.empty
+
+fvarsNVTAlt :: NVTAlt -> IntSet
+fvarsNVTAlt (NVTACon name cvars b) = let bvars = IntSet.fromList (map unV cvars)
+  in IntSet.difference (fvarsNVTTerm b) bvars
+fvarsNVTAlt (NVTAGuard g b) = fvarsNVTTerm g `IntSet.union` fvarsNVTTerm b
+fvarsNVTAlt (NVTALit lit b) = fvarsNVTTerm b
+
+
+bvarsNVTTerm :: NVTTerm -> IntSet
+bvarsNVTTerm (NVTVar v) = IntSet.empty
+bvarsNVTTerm (NVTPrim p) = IntSet.empty
+bvarsNVTTerm (NVTDef name) = IntSet.empty
+bvarsNVTTerm (NVTApp f ts) = IntSet.unions $ bvarsNVTTerm f : map bvarsNVTTerm ts
+bvarsNVTTerm (NVTLam (V i) b) = IntSet.insert i $ bvarsNVTTerm b
+bvarsNVTTerm (NVTLit lit) = IntSet.empty
+bvarsNVTTerm (NVTCon c) = IntSet.empty
+bvarsNVTTerm (NVTLet (V i) e b) = bvarsNVTTerm e `IntSet.union` IntSet.insert i (bvarsNVTTerm b)
+bvarsNVTTerm (NVTCase (V i) caseType dft alts) = IntSet.unions $ bvarsNVTTerm dft : map bvarsNVTAlt alts
+bvarsNVTTerm NVTUnit = IntSet.empty
+bvarsNVTTerm NVTSort = IntSet.empty
+bvarsNVTTerm NVTErased = IntSet.empty
+bvarsNVTTerm (NVTError t) = IntSet.empty
+
+bvarsNVTAlt :: NVTAlt -> IntSet
+bvarsNVTAlt (NVTACon name cvars b) = let bvars = IntSet.fromList (map unV cvars)
+  in IntSet.union (bvarsNVTTerm b) bvars
+bvarsNVTAlt (NVTAGuard g b) = bvarsNVTTerm g `IntSet.union` bvarsNVTTerm b
+bvarsNVTAlt (NVTALit lit b) = bvarsNVTTerm b
 
