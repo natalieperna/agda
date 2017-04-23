@@ -116,6 +116,7 @@ data CommandLineOptions = Options
   , optCaching          :: Bool
   , optInlineProj       :: Bool
   , optSquashCases      :: Bool
+  , optFloatPLet        :: Bool
   , optOnlyScopeChecking :: Bool
     -- ^ Should the top-level module only be scope-checked, and not
     --   type-checked?
@@ -206,6 +207,7 @@ defaultOptions = Options
   , optOnlyScopeChecking = False
   , optInlineProj       = False
   , optSquashCases      = False
+  , optFloatPLet        = False
   }
 
 defaultPragmaOptions :: PragmaOptions
@@ -345,6 +347,9 @@ inlineProjFlag o = return $ o { optInlineProj = True }
 
 squashCasesFlag :: Flag CommandLineOptions
 squashCasesFlag o = return $ o { optSquashCases = True }
+
+floatPLetFlag :: Flag CommandLineOptions
+floatPLetFlag o = return $ o { optFloatPLet = True }
 
 proofIrrelevanceFlag :: Flag PragmaOptions
 proofIrrelevanceFlag o = return $ o { optProofIrrelevance = True }
@@ -579,6 +584,8 @@ standardOptions =
                     "inline proper projections"
     , Option []     ["squash-cases"] (NoArg squashCasesFlag)
                     "somehow prevent/prune duplicate constructors in cases"
+    , Option []     ["float-plet"] (NoArg floatPLetFlag)
+                    "float pattern lets to remove duplication"
     ] ++ map (fmap lift) pragmaOptions
   where
   lift :: Flag PragmaOptions -> Flag CommandLineOptions

@@ -63,10 +63,13 @@ instance Eq NVTTerm where (==) = eqNVTTerm
 eqNVTTerm :: NVTTerm -> NVTTerm -> Bool
 eqNVTTerm = eqT IntMap.empty
   where
-    eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool
-    eqT m (NVTVar (V i)) (NVTVar (V j)) = case IntMap.lookup i m of
+    eqV :: IntMap Int -> Var -> Var -> Bool
+    eqV m (V i) (V j) = case IntMap.lookup i m of
       Nothing -> i == j
       Just j' -> j == j'
+
+    eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool
+    eqT m (NVTVar v) (NVTVar v') = eqV m v v'
     eqT m (NVTPrim p) (NVTPrim p') = p == p'
     eqT m (NVTDef n) (NVTDef n') = n == n'
     eqT m (NVTApp f ts) (NVTApp f' ts') = and $ zipWith (eqT m) (f : ts) (f' : ts')
@@ -74,9 +77,8 @@ eqNVTTerm = eqT IntMap.empty
     eqT m (NVTLit l) (NVTLit l') = l == l'
     eqT m (NVTCon n) (NVTCon n') = n == n'
     eqT m (NVTLet (V i) e b) (NVTLet (V j) e' b') = eqT m e e' && eqT (IntMap.insert i j m) b b'
-    eqT m (NVTCase (V i) cty dft alts) (NVTCase (V j) cty' dft' alts') =
-      (case IntMap.lookup i m of Nothing -> i == j; Just j' -> j == j') &&
-      and (zipWith (eqA m) alts alts')
+    eqT m (NVTCase v cty dft alts) (NVTCase v' cty' dft' alts') =
+      eqV m v v' && and (zipWith (eqA m) alts alts')
     eqT m NVTUnit NVTUnit = True
     eqT m NVTSort NVTSort = True
     eqT m NVTErased NVTErased = True
@@ -91,6 +93,9 @@ eqNVTTerm = eqT IntMap.empty
     eqA m (NVTALit lit b) (NVTALit lit' b') = lit == lit' && eqT m b b'
     eqA _ _ _ = False
 
+
+fromTTerm' :: TTerm -> NVTTerm
+fromTTerm' t = evalState (fromTTerm [] t) 0
 
 type U = State Int
 
@@ -133,6 +138,8 @@ fromTAlt vs (TACon name arity b) = do
 fromTAlt vs (TAGuard g b) = NVTAGuard <$> fromTTerm vs g <*> fromTTerm vs b
 fromTAlt vs (TALit lit b) = NVTALit lit <$> fromTTerm vs b
 
+toTTerm' :: NVTTerm -> TTerm
+toTTerm' = toTTerm []
 
 toTTerm :: [Var] -> NVTTerm -> TTerm
 toTTerm vs (NVTVar v) = TVar (maybe __IMPOSSIBLE__ id $ elemIndex v vs)
@@ -175,8 +182,7 @@ fvarsNVTTerm NVTErased = IntSet.empty
 fvarsNVTTerm (NVTError t) = IntSet.empty
 
 fvarsNVTAlt :: NVTAlt -> IntSet
-fvarsNVTAlt (NVTACon name cvars b) = let bvars = IntSet.fromList (map unV cvars)
-  in IntSet.difference (fvarsNVTTerm b) bvars
+fvarsNVTAlt (NVTACon c cvars b) = foldr (IntSet.delete . unV) (fvarsNVTTerm b) cvars
 fvarsNVTAlt (NVTAGuard g b) = fvarsNVTTerm g `IntSet.union` fvarsNVTTerm b
 fvarsNVTAlt (NVTALit lit b) = fvarsNVTTerm b
 
@@ -202,3 +208,40 @@ bvarsNVTAlt (NVTACon name cvars b) = let bvars = IntSet.fromList (map unV cvars)
 bvarsNVTAlt (NVTAGuard g b) = bvarsNVTTerm g `IntSet.union` bvarsNVTTerm b
 bvarsNVTAlt (NVTALit lit b) = bvarsNVTTerm b
 
+
+
+renameVar :: IntMap Var -> Var -> Var
+renameVar m v@(V i) = IntMap.findWithDefault v i m
+
+renameNVTTerm :: IntMap Var -> NVTTerm -> NVTTerm
+renameNVTTerm m (NVTVar v) = NVTVar $ renameVar m v
+renameNVTTerm m t@(NVTPrim _) = t
+renameNVTTerm m t@(NVTDef _) = t
+renameNVTTerm m (NVTApp f ts) = NVTApp (renameNVTTerm m f) (map (renameNVTTerm m) ts)
+renameNVTTerm m (NVTLam v@(V i) b) = let
+  m' = IntMap.delete i m
+  in if v `elem` IntMap.elems m'
+  then __IMPOSSIBLE__ -- unexpected variable capture
+  else NVTLam v $ renameNVTTerm m' b
+renameNVTTerm m t@(NVTLit _) = t
+renameNVTTerm m t@(NVTCon _) = t
+renameNVTTerm m (NVTLet v@(V i) e b) = let
+  m' = IntMap.delete i m
+  in if v `elem` IntMap.elems m'
+  then __IMPOSSIBLE__ -- unexpected variable capture
+  else NVTLet v (renameNVTTerm m e) (renameNVTTerm m' b)
+renameNVTTerm m (NVTCase v caseType dft alts) = let
+    v' = renameVar m v
+  in NVTCase v' caseType (renameNVTTerm m dft) $ map (renameNVTAlt m) alts
+renameNVTTerm m NVTUnit = NVTUnit
+renameNVTTerm m NVTSort = NVTSort
+renameNVTTerm m NVTErased = NVTErased
+renameNVTTerm m t@(NVTError _) = t
+
+renameNVTAlt :: IntMap Var  -> NVTAlt -> NVTAlt
+renameNVTAlt m (NVTACon name cvars b) = let m' = foldr (IntMap.delete . unV) m cvars
+  in if any (`elem` IntMap.elems m') cvars
+  then __IMPOSSIBLE__ -- unexpected variable capture
+  else  NVTACon name cvars $ renameNVTTerm m' b
+renameNVTAlt m (NVTAGuard g b) = NVTAGuard (renameNVTTerm m g) (renameNVTTerm m b)
+renameNVTAlt m (NVTALit lit b) = NVTALit lit (renameNVTTerm m b)

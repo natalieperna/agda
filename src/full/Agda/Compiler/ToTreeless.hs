@@ -34,6 +34,7 @@ import Agda.Compiler.Treeless.Unused
 import Agda.Compiler.Treeless.AsPatterns
 import Agda.Compiler.Treeless.Identity
 import Agda.Compiler.Treeless.CaseSquash
+import Agda.Compiler.Treeless.FloatPLetNV
 
 import Agda.Syntax.Common
 import Agda.TypeChecking.Monad as TCM
@@ -107,8 +108,15 @@ ccToTreeless q cc = do
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
   doSquashCases <- optSquashCases <$> commandLineOptions
-  body <- if (doSquashCases) then squashCases q body else return body
+  body <- if doSquashCases then squashCases q body else return body
   reportSDoc "treeless.opt.squash" (30 + v) $ text "-- after case squashing"  $$ pbody body
+  doFloatPLet <- optFloatPLet <$> commandLineOptions
+  body <- if doFloatPLet
+    then let body' = floatPLet body
+      in do
+      reportSDoc "treeless.opt.floatplet" (30 + v) $ text "-- after PLet floating"  $$ pbody body'
+      return body'
+    else return body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
