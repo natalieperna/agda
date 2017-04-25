@@ -108,8 +108,12 @@ ccToTreeless q cc = do
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
   doSquashCases <- optSquashCases <$> commandLineOptions
-  body <- if doSquashCases then squashCases q body else return body
-  reportSDoc "treeless.opt.squash" (30 + v) $ text "-- after case squashing"  $$ pbody body
+  body <- if doSquashCases
+    then do
+      body' <- squashCases q body
+      reportSDoc "treeless.opt.squash" (30 + v) $ text "-- after case squashing"  $$ pbody body'
+      return body'
+    else return body
   doFloatPLet <- optFloatPLet <$> commandLineOptions
   body <- if doFloatPLet
     then let body' = floatPLet body
