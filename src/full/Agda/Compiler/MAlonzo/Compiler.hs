@@ -527,6 +527,31 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
         let p = HS.PAsPat x $ HS.PApp hConNm $ map HS.PVar [ x | (x, False) <- zip xs erased ]
         t2' <- term t2
         return $ hsPLet p (hsCast t1') t2'
+{-
+  TLet t1 t2@(TCase 0 _ _ [TACon _ _ _]) | genPLet ->
+    case splitBoundedCase [0] t2 of
+      Just ((t2, vs), t1) -> do
+        t1' <- term t1
+        intros 1 $ \[x] -> do
+          intros (length vs - 1) $ \ xs -> do
+            erased <- lift $ getErasedConArgs c
+            hConNm <- lift $ conhqn c
+            let p = HS.PAsPat x $ HS.PApp hConNm $ map HS.PVar [ x | (x, False) <- zip xs erased ]
+            t2' <- term t2
+            return $ hsPLet p (hsCast t1') t2'
+      Nothing -> do
+        t1' <- term t1
+        intros 1 $ \[x] -> do
+          t2' <- term t2
+          return $ hsLet x (hsCast t1') t2'
+    where
+      splitBoundedCase vs (TCase sc ct dft [TACon c n t2]) | sc `elem` vs
+        = let ((b', vs'), t') = let vs2 = vs ++ [vs+1..vs+n] in case splitBoundedCase vs2 t2 of
+                Nothing -> ((TErased, vs2), t2)
+                Just r -> r
+          in Just ((TCase sc ct dft [TACon c n b'], vs'), t')
+      splitBoundedCase _ _ = Nothing
+-}
 
   T.TLet t1 t2 -> do
     t1' <- term t1
