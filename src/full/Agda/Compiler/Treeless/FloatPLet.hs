@@ -46,28 +46,58 @@ instance Num MinFreeVar where  -- only (+), (-), and fromInteger are relevant
 
 data PLet = PLet
   { minFree :: MinFreeVar
-  , cArity :: Nat
+  , pletNumBinders :: Nat  -- number of all binders on the spine of |eTerm|
   , eTerm :: TTerm
   } deriving (Eq, Ord, Show)
 
 instance Subst TTerm PLet where
   applySubst su p = p { eTerm = applySubst su $ eTerm p }
 
-splitPLet :: TTerm -> Maybe (PLet, TTerm)
-splitPLet (TLet t1 (TCase 0 ct def [TACon c n t2])) | harmless def
-  = Just (PLet d n t0, t2)
+
+applyPLet :: TTerm -> TTerm -> TTerm
+applyPLet (TLet t1 b) a = TLet t1 $ h b
   where
-    d = maybe NoFV MinFV $ fst . fst <$> Map.minViewWithKey (freeVars t0)
-    t0 = TLet t1 (TCase 0 ct def [TACon c n TErased])
-    harmless (TError _)  = True
-    harmless TUnit       = True
-    harmless TErased     = True
-    harmless TSort       = True
-    harmless _           = False
+    h (TCase v' ct def [TACon c cArity b'])
+      = TCase v' ct def [TACon c cArity (h b')]
+    h TErased = a
+    h _ = __IMPOSSIBLE__
+applyPLet _ _ = __IMPOSSIBLE__
+
+
+-- If |splitPLet t = Just (pl, t')|, then |applyPLet (eTerm pl) t' = t|.
+splitPLet :: TTerm -> Maybe (PLet, TTerm)
+splitPLet (TLet t1 t2) = case splitBoundedCase 0 t2 of
+  Nothing -> Nothing
+  Just ((pat, maxv), t') -> Just (PLet d maxv (TLet t1 pat), t')
+  where
+    d = maybe NoFV MinFV $ fst . fst <$> Map.minViewWithKey (freeVars t1)
 splitPLet _ = Nothing
 
+-- |splitBoundedCase maxv t = Just ((t0, maxv'), t1)| means
+-- that |t| matched on a variable |<= maxv|,
+-- and |applyPLet t0 t1 == t|,
+-- and |maxv'| is |maxv| plus the number of binders in |t0|.
+splitBoundedCase :: Nat -> TTerm -> Maybe ((TTerm, Nat), TTerm)
+splitBoundedCase maxv (TCase v ct dft [TACon c cArity t2]) | v <= maxv && harmlessTT dft
+  = let ((b', maxv'), t') = let maxv2 = maxv + cArity in case splitBoundedCase maxv2 t2 of
+          Nothing -> ((TErased, maxv2), t2)
+          Just r -> r
+    in Just ((TCase v ct dft [TACon c cArity b'], maxv'), t')
+splitBoundedCase _ _ = Nothing
+
+
+
+-- ``harmless'' in the sense of not contributing possible control flow
+-- if used as default expression in |TCase|:
+harmlessTT :: TTerm -> Bool
+harmlessTT (TError _)  = True
+harmlessTT TUnit       = True
+harmlessTT TErased     = True
+harmlessTT TSort       = True
+harmlessTT _           = False
+
 countBindersPLet :: PLet -> Nat
-countBindersPLet p = succ (cArity p)
+countBindersPLet = pletNumBinders
 
 countBindersPLets :: [PLet] -> Nat
 countBindersPLets = sum . map countBindersPLet
@@ -103,7 +133,7 @@ insertPLet p0 (ps, t) = let
                        }
     lowers :: Int -> [PLet] -> [PLet]
     lowers _ [] = []
-    lowers offset (p : ps) = lower offset p : lowers (offset + succ (cArity p)) ps
+    lowers offset (p : ps) = lower offset p : lowers (offset + pletNumBinders p) ps
   in ( map raise ps1 ++ p0' : lowers 0 ps2
      , renameP __IMPOSSIBLE__ (swapP d2 d0 d1) t
      )
