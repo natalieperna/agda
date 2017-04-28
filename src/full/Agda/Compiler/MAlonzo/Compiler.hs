@@ -39,6 +39,7 @@ import Agda.Compiler.MAlonzo.Pragmas
 import Agda.Compiler.ToTreeless
 import Agda.Compiler.Treeless.Unused
 import Agda.Compiler.Treeless.Erase
+import qualified Agda.Compiler.Treeless.FloatPLet as FloatPLet
 import Agda.Compiler.Backend
 
 import Agda.Interaction.FindFile
@@ -474,6 +475,17 @@ checkCover q ty n cs hsCons = do
 closedTerm :: Bool -> T.TTerm -> TCM HS.Exp
 closedTerm genPLet v = hsCast <$> term v `runReaderT` initCCEnv genPLet
 
+-- TODO add a bunch of appropriate as patterns to the vars in pats, recurse throuh tp to find them
+addAsPats :: [HS.Name] -> Nat -> TTerm -> [HS.Pat] -> [HS.Pat]
+addAsPats xs numBound
+  tp@(TCase sc _ _ [TACon c n tp'])
+  pats = pats
+  -- Turn sc into a varname... by indexing out of xs, somehow? Probably need to carry along more information
+  -- One of the pats should be PVar matching that varname (you might have to go down multiple levels of PApps in pats to find the PVar)
+  -- Replace that PVar with a PApp using c and n, then recurse on tp' to continue doing this until a TErased is reached
+addAsPats _ _ TErased pats = pats
+addAsPats _ _ _ _ = __IMPOSSIBLE__
+
 -- | Extract Agda term to Haskell expression.
 --   Erased arguments are extracted as @()@.
 --   Types are extracted as @()@.
@@ -530,33 +542,26 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
         return $ hsPLet p (hsCast t1') t2'
 -}
   TLet t1 t2@(TCase 0 _ _ [TACon _ _ _]) | genPLet ->
-    case splitBoundedCase [0] t2 of
-      Just (((TCase 0 ct def [TACon c n t4]), vs), t3) -> do
-        t1' <- term t3
+    case FloatPLet.splitPLet tm0 of
+      -- TODO Try to redo this without making the first case special
+      -- Just (FloatPLet.PLet minFV numBinders (TLet t1 tp), tb) -> do
+      Just (FloatPLet.PLet minFV numBinders (TLet t1 (TCase 0 _ _ [TACon c n tp])), tb) -> do
+        t1' <- term t1
+        tb' <- term tb
         intros 1 $ \[x] -> do
-          intros (length vs - 1) $ \ xs -> do
+          intros numBinders $ \xs -> do
             erased <- lift $ getErasedConArgs c
             hConNm <- lift $ conhqn c
-            let p = HS.PAsPat x $ HS.PApp hConNm $ map HS.PVar [ x | (x, False) <- zip xs erased ]
-            t2' <- term t4
-            return $ hsPLet p (hsCast t1') t2'
-      Just ((_, vs), t1) -> do
+            let vars = take n xs
+            let pats = map HS.PVar [ x | (x, False) <- zip vars erased ]
+            let pats' = addAsPats (x:xs) n tp pats
+            let p = HS.PAsPat x $ HS.PApp hConNm pats'
+            return $ hsPLet p (hsCast t1') tb'
+      _ -> do
         t1' <- term t1
         intros 1 $ \[x] -> do
           t2' <- term t2
           return $ hsLet x (hsCast t1') t2'
-      Nothing -> do
-        t1' <- term t1
-        intros 1 $ \[x] -> do
-          t2' <- term t2
-          return $ hsLet x (hsCast t1') t2'
-    where
-      splitBoundedCase vs (TCase sc ct dft [TACon c n t2]) | sc `elem` vs
-        = let ((b', vs'), t') = let vs2 = vs ++ [(last vs)+1..(last vs)+n] in case splitBoundedCase vs2 t2 of
-                Nothing -> ((TErased, vs2), t2)
-                Just r -> r
-          in Just ((TCase sc ct dft [TACon c n b'], vs'), t')
-      splitBoundedCase _ _ = Nothing
 
   T.TLet t1 t2 -> do
     t1' <- term t1
