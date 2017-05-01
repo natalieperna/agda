@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, PatternGuards #-}
 
 module Agda.Compiler.MAlonzo.Compiler where
 
@@ -475,16 +475,36 @@ checkCover q ty n cs hsCons = do
 closedTerm :: Bool -> T.TTerm -> TCM HS.Exp
 closedTerm genPLet v = hsCast <$> term v `runReaderT` initCCEnv genPLet
 
--- TODO add a bunch of appropriate as patterns to the vars in pats, recurse throuh tp to find them
-addAsPats :: [HS.Name] -> Nat -> TTerm -> [HS.Pat] -> [HS.Pat]
+-- | In @addAsPats xs numBound tp pat@, recurse through @tp@ to find all
+--   single constructor @TCase@s and replace @PVar@s of the same scrutinee
+--   with appropriate @PAsPat@s, until @TErased@ is reached.
+--   @xs@ contains all necessary variables introduce by the initial call
+--   in @term@, with @numBound@ indicating the number of introduced
+--   of variables introduced by the caller used in @PApp@s and the top let.
+addAsPats :: [HS.Name] -> Nat -> TTerm -> HS.Pat -> CC HS.Pat
 addAsPats xs numBound
-  tp@(TCase sc _ _ [TACon c n tp'])
-  pats = pats
-  -- Turn sc into a varname... by indexing out of xs, somehow? Probably need to carry along more information
-  -- One of the pats should be PVar matching that varname (you might have to go down multiple levels of PApps in pats to find the PVar)
-  -- Replace that PVar with a PApp using c and n, then recurse on tp' to continue doing this until a TErased is reached
-addAsPats _ _ TErased pats = pats
-addAsPats _ _ _ _ = __IMPOSSIBLE__
+  tp@(TCase sc _ _ [TACon c cArity tp'])
+  pat = case xs !!! (numBound - 1 - sc) of
+    Just scName -> do
+      erased <- lift $ getErasedConArgs c
+      hConNm <- lift $ conhqn c
+      let oldPat = HS.PVar scName
+      let vars = take cArity $ drop numBound xs
+      let newPat = HS.PAsPat scName $ HS.PApp hConNm $ map HS.PVar [ x | (x, False) <- zip vars erased ]
+      let pat' = replacePats oldPat newPat pat
+      addAsPats xs (numBound + cArity) tp' pat'
+    Nothing -> __IMPOSSIBLE__
+addAsPats _ _ TErased pat = return pat
+addAsPats _ _ _ _ = __IMPOSSIBLE__ -- Guaranteed by splitPLet
+
+-- | In @replacePats old new p@, replace all instances of @old@ in @p@
+--   with @new@
+replacePats :: HS.Pat -> HS.Pat -> HS.Pat -> HS.Pat
+replacePats old new p@(HS.PVar _) = if old == p then new else p
+replacePats old new (HS.PAsPat sc p) = HS.PAsPat sc $ replacePats old new p
+replacePats old new p@(HS.PApp q pats) =
+  HS.PApp q $ map (replacePats old new) pats
+replacePats _ _ p = __IMPOSSIBLE__ -- Guaranteed by addAsPats
 
 -- | Extract Agda term to Haskell expression.
 --   Erased arguments are extracted as @()@.
@@ -530,38 +550,17 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
     (nm:_) <- asks ccNameSupply
     intros 1 $ \ [x] ->
       hsLambda [HS.PVar x] <$> term at
-{-
-  TLet t1 (TCase 0 ct def [TACon c n t2]) | genPLet -> do
-    t1' <- term t1
-    intros 1 $ \[x] -> do
-      intros n $ \ xs -> do
-        erased <- lift $ getErasedConArgs c
-        hConNm <- lift $ conhqn c
-        let p = HS.PAsPat x $ HS.PApp hConNm $ map HS.PVar [ x | (x, False) <- zip xs erased ]
-        t2' <- term t2
-        return $ hsPLet p (hsCast t1') t2'
--}
-  TLet t1 t2@(TCase 0 _ _ [TACon _ _ _]) | genPLet ->
-    case FloatPLet.splitPLet tm0 of
-      -- TODO Try to redo this without making the first case special
-      -- Just (FloatPLet.PLet minFV numBinders (TLet t1 tp), tb) -> do
-      Just (FloatPLet.PLet minFV numBinders (TLet t1 (TCase 0 _ _ [TACon c n tp])), tb) -> do
+
+  TLet _ (TCase 0 _ _ [TACon _ _ _])
+    | genPLet
+    , Just (FloatPLet.PLet minFV numBinders (TLet t1 tp), tb) <- FloatPLet.splitPLet tm0
+    -> do
         t1' <- term t1
-        tb' <- term tb
         intros 1 $ \[x] -> do
           intros numBinders $ \xs -> do
-            erased <- lift $ getErasedConArgs c
-            hConNm <- lift $ conhqn c
-            let vars = take n xs
-            let pats = map HS.PVar [ x | (x, False) <- zip vars erased ]
-            let pats' = addAsPats (x:xs) n tp pats
-            let p = HS.PAsPat x $ HS.PApp hConNm pats'
+            tb' <- term tb
+            p <- addAsPats (x:xs) 1 tp (HS.PVar x)
             return $ hsPLet p (hsCast t1') tb'
-      _ -> do
-        t1' <- term t1
-        intros 1 $ \[x] -> do
-          t2' <- term t2
-          return $ hsLet x (hsCast t1') t2'
 
   T.TLet t1 t2 -> do
     t1' <- term t1
