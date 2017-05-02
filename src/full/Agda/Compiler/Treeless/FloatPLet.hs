@@ -5,6 +5,7 @@ import Control.Applicative
 import Control.Monad.Reader
 import Data.Monoid
 import qualified Data.Map as Map
+import Data.Map (Map)
 
 import Agda.Syntax.Common
 import Agda.Syntax.Treeless
@@ -46,6 +47,7 @@ instance Num MinFreeVar where  -- only (+), (-), and fromInteger are relevant
 
 data PLet = PLet
   { minFree :: MinFreeVar
+  , pletFreeVars :: Map Nat Occurs
   , pletNumBinders :: Nat  -- number of all binders on the spine of |eTerm|
   , eTerm :: TTerm
   } deriving (Eq, Ord, Show)
@@ -68,9 +70,18 @@ applyPLet _ _ = __IMPOSSIBLE__
 splitPLet :: TTerm -> Maybe (PLet, TTerm)
 splitPLet (TLet t1 t2) = case splitBoundedCase 0 t2 of
   Nothing -> Nothing
-  Just ((pat, maxv), t') -> Just (PLet d maxv (TLet t1 pat), t')
+  Just ((pat, maxv), t') -> Just
+    ( PLet
+      { minFree = d
+      , pletFreeVars = fvs
+      , pletNumBinders = maxv
+      , eTerm = TLet t1 pat
+      }
+    , t'
+    )
   where
-    d = maybe NoFV MinFV $ fst . fst <$> Map.minViewWithKey (freeVars t1)
+    fvs = freeVars t1
+    d = maybe NoFV MinFV $ fst . fst <$> Map.minViewWithKey fvs
 splitPLet _ = Nothing
 
 -- |splitBoundedCase maxv t = Just ((t0, maxv'), t1)| means

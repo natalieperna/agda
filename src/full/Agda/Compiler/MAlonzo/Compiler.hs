@@ -553,7 +553,7 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
 
   TLet _ (TCase 0 _ _ [TACon _ _ _])
     | genPLet
-    , Just (FloatPLet.PLet minFV numBinders (TLet t1 tp), tb) <- FloatPLet.splitPLet tm0
+    , Just (FloatPLet.PLet {pletNumBinders = numBinders, eTerm = TLet t1 tp}, tb) <- FloatPLet.splitPLet tm0
     -> do
         t1' <- term t1
         intros 1 $ \[x] -> do
