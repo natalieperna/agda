@@ -1,6 +1,5 @@
 {-# LANGUAGE CPP #-}
--- | Eliminates case expressions where the scrutinee has already
--- been matched on by an enclosing parent case expression.
+
 module Agda.Compiler.Treeless.CaseSquash (squashCases) where
 
 import Agda.Syntax.Abstract.Name (QName)
@@ -13,15 +12,20 @@ import Agda.Compiler.Treeless.Subst
 
 #include "undefined.h"
 
--- TODO Find the actual technical term for this type of compiler optimization
+-- | Eliminates case expressions where the scrutinee has already
+-- been matched on by an enclosing parent case expression.
 squashCases :: QName -> TTerm -> TCM TTerm
 squashCases q body = return $ dedupTerm (0, []) body
--- (constructor name, constructor arguments)
+
+-- | Qualified name of constructor with a list of its arguments
 type ConWithArgs = (QName, [Int])
--- CaseMatch: (case scrutinee, Maybe ConWithArgs)
--- (sc, Nothing) indicates the default case
+
+-- | Case scrutinee (de Bruijn index) with alternative match
+--   for that expression. 'Nothing' indicates the default case.
 type CaseMatch = (Int, Maybe ConWithArgs)
--- (next variable index, cases in scope)
+
+-- | Environment containing next de Bruijn index to be introduced
+--   and 'CaseMatch'es in scope.
 type Env = (Int, [CaseMatch])
 
 dedupTerm :: Env -> TTerm -> TTerm
