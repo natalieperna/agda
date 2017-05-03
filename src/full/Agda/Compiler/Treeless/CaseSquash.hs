@@ -28,38 +28,37 @@ type CaseMatch = (Int, ConWithArgs)
 --   and 'CaseMatch'es in scope.
 type Env = (Int, [CaseMatch])
 
+-- | Recurse through 'TTerm's, accumulting environment of case alternatives
+--   matched and replacing repeated cases.
+--   De Bruijn indices in environment should be appropriatedly shifted as
+--   terms are traversed.
 dedupTerm :: Env -> TTerm -> TTerm
-dedupTerm env@(n, cs) body =
-  case body of
-    -- increment vars in scope to account for newly bound
-    TLam tt -> TLam (dedupTerm (shiftIndices (+1) env) tt)
-    TCase sc t def alts ->
-      -- Check if scrutinee is already in scope
-      case lookup sc cs of
-        -- If in scope with match then substitute
-          -- Previous match was a constructor alt
-          -- Find the TACon with matching name and replace body with args substituted term, otherwise replace body with default term
-        Just match -> caseReplacement n match alts def
+-- Increment indices in scope to account for newly bound variable
+dedupTerm env (TLam tt) = TLam (dedupTerm (shiftIndices (+1) env) tt)
+dedupTerm env (TLet tt1 tt2) = TLet (dedupTerm env tt1) (dedupTerm (shiftIndices (+1) env) tt2)
 
-        -- Otherwise add to scope in alts
-        Nothing -> TCase sc t
-          (dedupTerm env def)
-          (map (dedupTermHelper sc env) alts)
+-- Check if scrutinee is already in scope
+dedupTerm env@(n, cs) body@(TCase sc t def alts) = case lookup sc cs of
+  -- If in scope with match then substitute body
+  Just match -> caseReplacement match body
 
-    -- Continue traversing nested terms
-    TApp tt args -> TApp (dedupTerm' tt) (map dedupTerm' args)
-    TLet tt1 tt2 -> TLet (dedupTerm' tt1) (dedupTerm (shiftIndices (+1) env) tt2)
-    _ -> body
-    where
-          dedupTerm' = dedupTerm env
-          dedupAlt' = dedupAlt env
+  -- Otherwise add to scope in alt branches
+  Nothing -> TCase sc t
+    (dedupTerm env def)
+    (map (dedupTermHelper sc env) alts)
 
-caseReplacement :: Int -> ConWithArgs -> [TAlt] -> TTerm -> TTerm
-caseReplacement n (name, args) alts def =
+-- Continue traversing nested terms in applications
+dedupTerm env (TApp tt args) = TApp (dedupTerm env tt) (map (dedupTerm env) args)
+dedupTerm env body = body
+
+-- | Find the alternative with matching name and replace case term with its body
+--   (after necessary substitutions), if it exists.
+caseReplacement :: ConWithArgs -> TTerm -> TTerm
+caseReplacement (name, args) tt@(TCase _ _ _ alts) =
   case lookupTACon name alts of
     Just (TACon name ar body) -> varReplace [0..ar-1] (reverse args) body
-    Just _ -> def -- TODO does this make sense?
-    Nothing -> def
+    _ -> tt
+caseReplacement _ tt = tt
 
 lookupTACon :: QName -> [TAlt] -> Maybe TAlt
 lookupTACon _ [] = Nothing
