@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, PatternGuards #-}
 
 module Agda.Compiler.Treeless.CaseSquash (squashCases) where
 
@@ -54,10 +54,9 @@ dedupTerm env body = body
 -- | Find the alternative with matching name and replace case term with its body
 --   (after necessary substitutions), if it exists.
 caseReplacement :: ConWithArgs -> TTerm -> TTerm
-caseReplacement (name, args) tt@(TCase _ _ _ alts) =
-  case lookupTACon name alts of
-    Just (TACon name ar body) -> varReplace [0..ar-1] (reverse args) body
-    _ -> tt
+caseReplacement (name, args) tt@(TCase _ _ _ alts)
+  | Just (TACon _ ar body) <- lookupTACon name alts
+  = varReplace [0..ar-1] (reverse args) body
 caseReplacement _ tt = tt
 
 lookupTACon :: QName -> [TAlt] -> Maybe TAlt
