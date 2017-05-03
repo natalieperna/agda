@@ -21,8 +21,8 @@ squashCases q body = return $ dedupTerm (0, []) body
 type ConWithArgs = (QName, [Int])
 
 -- | Case scrutinee (de Bruijn index) with alternative match
---   for that expression. 'Nothing' indicates the default case.
-type CaseMatch = (Int, Maybe ConWithArgs)
+--   for that expression.
+type CaseMatch = (Int, ConWithArgs)
 
 -- | Environment containing next de Bruijn index to be introduced
 --   and 'CaseMatch'es in scope.
@@ -37,23 +37,14 @@ dedupTerm env@(n, cs) body =
       -- Check if scrutinee is already in scope
       case lookup sc cs of
         -- If in scope with match then substitute
-        Just existingCase -> case existingCase of
           -- Previous match was a constructor alt
           -- Find the TACon with matching name and replace body with args substituted term, otherwise replace body with default term
-          Just match -> caseReplacement n match alts def
-          -- Previous match was a default case
-          -- TODO Add more info to environment to handle this. If the default case was followed before, then maybe the default case should be followed again, but we should first check that the other TAlts are the same as they were in the "match".
-          Nothing ->
-            TCase sc t
-            (dedupTerm' def)
-            (map dedupAlt' alts)
+        Just match -> caseReplacement n match alts def
 
-        -- Otherwise add to scope
+        -- Otherwise add to scope in alts
         Nothing -> TCase sc t
-          (dedupTerm defEnv def)
+          (dedupTerm env def)
           (map (dedupTermHelper sc env) alts)
-          where
-            defEnv = (n, (sc,Nothing):cs)
 
     -- Continue traversing nested terms
     TApp tt args -> TApp (dedupTerm' tt) (map dedupTerm' args)
@@ -83,7 +74,7 @@ dedupTermHelper sc env alt =
   case alt of
     TACon name ar body -> TACon name ar (dedupTerm env' body)
       where
-        env' = addToEnv (sc + ar,Just (name, [ar-1,ar-2..0])) (shiftIndices (+ar) env)
+        env' = addToEnv (sc + ar, (name, [ar-1,ar-2..0])) (shiftIndices (+ar) env)
     TAGuard guard body -> TAGuard guard (dedupTerm env body)
     TALit lit body -> TALit lit (dedupTerm env body)
 
@@ -102,8 +93,7 @@ shiftIndices :: (Int -> Int) -> Env -> Env
 shiftIndices f (n, cs) = (f n, map (shiftIndices' f) cs)
   where
     shiftIndices' :: (Int -> Int) -> CaseMatch -> CaseMatch
-    shiftIndices' f (sc, Nothing) = (f sc, Nothing)
-    shiftIndices' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
+    shiftIndices' f (sc, (name, vars)) = (f sc, (name, map f vars))
 
 varReplace :: [Int] -> [Int] -> TTerm -> TTerm
 varReplace (from:froms) (to:tos) = subst from (TVar to) . varReplace froms tos
