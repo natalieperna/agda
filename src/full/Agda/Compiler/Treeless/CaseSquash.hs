@@ -59,12 +59,11 @@ caseReplacement (name, args) tt@(TCase _ _ _ alts)
   = varReplace [0..ar-1] (reverse args) body
 caseReplacement _ tt = tt
 
+-- | Lookup 'TACon' in list of 'TAlt's by qualified name
 lookupTACon :: QName -> [TAlt] -> Maybe TAlt
-lookupTACon _ [] = Nothing
-lookupTACon match ((alt@(TACon name ar body)):alts) = if (match == name)
-                                                      then Just alt
-                                                      else lookupTACon match alts
+lookupTACon match ((alt@(TACon name ar body)):alts) | match == name = Just alt
 lookupTACon match (_:alts) = lookupTACon match alts
+lookupTACon _ [] = Nothing
 
 -- TODO Better name
 dedupTermHelper :: Int -> Env -> TAlt -> TAlt
