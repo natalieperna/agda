@@ -18,12 +18,10 @@ import Agda.Utils.Impossible
 squashCases :: QName -> TTerm -> TCM TTerm
 squashCases q body = return $ dedupTerm (0, []) body
 
--- | Qualified name of constructor with a list of its arguments
-type ConWithArgs = (QName, [Int])
-
 -- | Case scrutinee (de Bruijn index) with alternative match
---   for that expression.
-type CaseMatch = (Int, ConWithArgs)
+--   for that expression, made up of qualified name of constructor
+--   and a list of its arguments (also as de Bruijn indices)
+type CaseMatch = (Int, (QName, [Int]))
 
 -- | Environment containing next de Bruijn index to be introduced
 --   and 'CaseMatch'es in scope.
@@ -54,7 +52,7 @@ dedupTerm env body = body
 
 -- | Find the alternative with matching name and replace case term with its body
 --   (after necessary substitutions), if it exists.
-caseReplacement :: ConWithArgs -> TTerm -> TTerm
+caseReplacement :: (QName, [Int]) -> TTerm -> TTerm
 caseReplacement (name, args) tt@(TCase _ _ _ alts)
   | Just (TACon _ ar body) <- lookupTACon name alts
   = varReplace [0..ar-1] (reverse args) body
