@@ -45,7 +45,7 @@ dedupTerm env@(n, cs) body@(TCase sc t def alts) = case lookup sc cs of
   -- Otherwise add to scope in alt branches
   Nothing -> TCase sc t
     (dedupTerm env def)
-    (map (dedupTermHelper sc env) alts)
+    (map (dedupAlt sc env) alts)
 
 -- Continue traversing nested terms in applications
 dedupTerm env (TApp tt args) = TApp (dedupTerm env tt) (map (dedupTerm env) args)
@@ -65,25 +65,17 @@ lookupTACon match ((alt@(TACon name ar body)):alts) | match == name = Just alt
 lookupTACon match (_:alts) = lookupTACon match alts
 lookupTACon _ [] = Nothing
 
--- TODO Better name
-dedupTermHelper :: Int -> Env -> TAlt -> TAlt
-dedupTermHelper sc env alt =
-  case alt of
-    TACon name ar body -> TACon name ar (dedupTerm env' body)
-      where
-        env' = addToEnv (sc + ar, (name, [ar-1,ar-2..0])) (shiftIndices (+ar) env)
-    TAGuard guard body -> TAGuard guard (dedupTerm env body)
-    TALit lit body -> TALit lit (dedupTerm env body)
+-- | Introduce new constructor matches into environment scope
+dedupAlt :: Int -> Env -> TAlt -> TAlt
+dedupAlt sc env (TACon name ar body) =
+  let env' = addToEnv (sc + ar, (name, [ar-1,ar-2..0])) (shiftIndices (+ar) env)
+  in TACon name ar (dedupTerm env' body)
+dedupAlt sc env (TAGuard guard body) = TAGuard guard (dedupTerm env body)
+dedupAlt sc env (TALit lit body) = TALit lit (dedupTerm env body)
 
+-- | Add a new case match to environment
 addToEnv :: CaseMatch -> Env -> Env
 addToEnv c (n, cs) = (n, c:cs)
-
-dedupAlt :: Env -> TAlt -> TAlt
-dedupAlt env alt =
-  case alt of
-    TACon name ar body -> TACon name ar (dedupTerm (shiftIndices (+ar) env) body)
-    TAGuard guard body -> TAGuard guard (dedupTerm env body)
-    TALit lit body -> TALit lit (dedupTerm env body)
 
 -- TODO make this function less ugly and repetitive
 shiftIndices :: (Int -> Int) -> Env -> Env
