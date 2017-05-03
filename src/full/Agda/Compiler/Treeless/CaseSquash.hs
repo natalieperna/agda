@@ -29,13 +29,13 @@ type CaseMatch = (Int, Maybe ConWithArgs)
 type Env = (Int, [CaseMatch])
 
 dedupTerm :: Env -> TTerm -> TTerm
-dedupTerm (n, env) body =
+dedupTerm env@(n, cs) body =
   case body of
     -- increment vars in scope to account for newly bound
-    TLam tt -> TLam (dedupTerm (n + 1, modifyCaseScope (+1) env) tt)
+    TLam tt -> TLam (dedupTerm (shiftIndices (+1) env) tt)
     TCase sc t def alts ->
       -- Check if scrutinee is already in scope
-      case lookup sc env of
+      case lookup sc cs of
         -- If in scope with match then substitute
         Just existingCase -> case existingCase of
           -- Previous match was a constructor alt
@@ -51,17 +51,17 @@ dedupTerm (n, env) body =
         -- Otherwise add to scope
         Nothing -> TCase sc t
           (dedupTerm defEnv def)
-          (map (dedupTermHelper sc (n, env)) alts)
+          (map (dedupTermHelper sc env) alts)
           where
-            defEnv = (n, (sc,Nothing):env)
+            defEnv = (n, (sc,Nothing):cs)
 
     -- Continue traversing nested terms
     TApp tt args -> TApp (dedupTerm' tt) (map dedupTerm' args)
-    TLet tt1 tt2 -> TLet (dedupTerm' tt1) (dedupTerm (n + 1, modifyCaseScope (+1) env) tt2)
+    TLet tt1 tt2 -> TLet (dedupTerm' tt1) (dedupTerm (shiftIndices (+1) env) tt2)
     _ -> body
     where
-          dedupTerm' = dedupTerm (n, env)
-          dedupAlt' = dedupAlt (n, env)
+          dedupTerm' = dedupTerm env
+          dedupAlt' = dedupAlt env
 
 caseReplacement :: Int -> ConWithArgs -> [TAlt] -> TTerm -> TTerm
 caseReplacement n (name, args) alts def =
@@ -79,31 +79,31 @@ lookupTACon match (_:alts) = lookupTACon match alts
 
 -- TODO Better name
 dedupTermHelper :: Int -> Env -> TAlt -> TAlt
-dedupTermHelper sc (n, env) alt =
+dedupTermHelper sc env alt =
   case alt of
-    TACon name ar body -> TACon name ar (dedupTerm (n + ar, bindVars name ar sc env) body)
-    TAGuard guard body -> TAGuard guard (dedupTerm' body)
-    TALit lit body -> TALit lit (dedupTerm' body)
-    where
-      dedupTerm' = dedupTerm (n, env)
-      bindVars name ar sc env = (sc+ar,Just (name, [ar-1,ar-2..0])):modifyCaseScope (+ar) env
+    TACon name ar body -> TACon name ar (dedupTerm env' body)
+      where
+        env' = addToEnv (sc + ar,Just (name, [ar-1,ar-2..0])) (shiftIndices (+ar) env)
+    TAGuard guard body -> TAGuard guard (dedupTerm env body)
+    TALit lit body -> TALit lit (dedupTerm env body)
+
+addToEnv :: CaseMatch -> Env -> Env
+addToEnv c (n, cs) = (n, c:cs)
 
 dedupAlt :: Env -> TAlt -> TAlt
-dedupAlt (n, env) alt =
+dedupAlt env alt =
   case alt of
-    TACon name ar body -> TACon name ar (dedupTerm (n + ar, modifyCaseScope (+ar) env) body)
-    TAGuard guard body -> TAGuard guard (dedupTerm' body)
-    TALit lit body -> TALit lit (dedupTerm' body)
-    where
-      dedupTerm' = dedupTerm (n, env)
+    TACon name ar body -> TACon name ar (dedupTerm (shiftIndices (+ar) env) body)
+    TAGuard guard body -> TAGuard guard (dedupTerm env body)
+    TALit lit body -> TALit lit (dedupTerm env body)
 
 -- TODO make this function less ugly and repetitive
-modifyCaseScope :: (Int -> Int) -> [CaseMatch] -> [CaseMatch]
-modifyCaseScope f = map (modifyCaseScope' f)
+shiftIndices :: (Int -> Int) -> Env -> Env
+shiftIndices f (n, cs) = (f n, map (shiftIndices' f) cs)
   where
-    modifyCaseScope' :: (Int -> Int) -> CaseMatch -> CaseMatch
-    modifyCaseScope' f (sc, Nothing) = (f sc, Nothing)
-    modifyCaseScope' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
+    shiftIndices' :: (Int -> Int) -> CaseMatch -> CaseMatch
+    shiftIndices' f (sc, Nothing) = (f sc, Nothing)
+    shiftIndices' f (sc, Just (name, vars)) = (f sc, Just (name, map f vars))
 
 varReplace :: [Int] -> [Int] -> TTerm -> TTerm
 varReplace (from:froms) (to:tos) = subst from (TVar to) . varReplace froms tos
