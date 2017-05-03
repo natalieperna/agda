@@ -11,6 +11,7 @@ import Agda.TypeChecking.Monad as TCM
 import Agda.Compiler.Treeless.Subst
 
 #include "undefined.h"
+import Agda.Utils.Impossible
 
 -- | Eliminates case expressions where the scrutinee has already
 -- been matched on by an enclosing parent case expression.
@@ -77,15 +78,17 @@ dedupAlt sc env (TALit lit body) = TALit lit (dedupTerm env body)
 addToEnv :: CaseMatch -> Env -> Env
 addToEnv c (n, cs) = (n, c:cs)
 
--- TODO make this function less ugly and repetitive
+-- | Shift all de Bruijn indices in an environment according to provided
+--   function on integers
 shiftIndices :: (Int -> Int) -> Env -> Env
 shiftIndices f (n, cs) = (f n, map (shiftIndices' f) cs)
   where
     shiftIndices' :: (Int -> Int) -> CaseMatch -> CaseMatch
     shiftIndices' f (sc, (name, vars)) = (f sc, (name, map f vars))
 
+-- | Substitute list of current de Bruijn indices for list of new indices
+--   in a term
 varReplace :: [Int] -> [Int] -> TTerm -> TTerm
 varReplace (from:froms) (to:tos) = subst from (TVar to) . varReplace froms tos
 varReplace [] [] = id
--- TODO handle these
-varReplace _ _ = error "Mismatched arguments"
+varReplace _ _ = __IMPOSSIBLE__
