@@ -14,7 +14,7 @@ import qualified Data.IntMap as IntMap
 import Data.IntMap (IntMap)
 
 import Agda.Syntax.Common
-import Agda.Syntax.Treeless
+import Agda.Syntax.Treeless hiding (PLet(..))
 import Agda.Syntax.Literal
 import Agda.Syntax.Position
 import Agda.Syntax.Fixity
@@ -35,7 +35,7 @@ import Agda.Utils.Impossible
 data PLet = PLet
   { pletFVars :: IntSet
   , pletBinders :: [Var]
-  , eTerm :: NVTTerm -- |NVTErased| signals the end of the pattern
+  , pletNVTT :: NVTTerm -- |NVTErased| signals the end of the pattern
   } deriving (Show)
 
 corePLet :: PLet -> (IntSet, NVTTerm) -- let-body only
@@ -56,7 +56,7 @@ applyPLet (NVTLet v t1 b) a = NVTLet v t1 $ h b
     h _ = __IMPOSSIBLE__
 applyPLet _ _ = __IMPOSSIBLE__
 
--- If |splitPLet t = Just (pl, t')|, then |applyPLet (eTerm pl) t' = t|.
+-- If |splitPLet t = Just (pl, t')|, then |applyPLet (pletNVTT pl) t' = t|.
 splitPLet :: NVTTerm -> Maybe (PLet, NVTTerm)
 splitPLet (NVTLet v t1 t2) = case splitBoundedCase [v] t2 of
   Just ((pat, vs), t') -> Just (PLet (fvarsNVTTerm t1) vs (NVTLet v t1 pat), t')
@@ -138,8 +138,8 @@ floatPLet0 :: NVTTerm -> ([PLet], NVTTerm)
 floatPLet0 t = case splitPLet t of
   Just (p, t') -> case floatPLet0 t' of
     (ps, t'') -> case insertPLet p ps of
-      (Nothing, ps') -> (ps', applyPLet (eTerm p) t'')
-      (Just c, ps') -> (ps', applyPLet (eTerm c) $ renameNVTTerm' (pletBinders p) (pletBinders c) t'')
+      (Nothing, ps') -> (ps', applyPLet (pletNVTT p) t'')
+      (Just c, ps') -> (ps', applyPLet (pletNVTT c) $ renameNVTTerm' (pletBinders p) (pletBinders c) t'')
   Nothing -> case t of
     NVTVar _ -> ([], t)
     NVTPrim _ -> ([], t)
@@ -148,7 +148,7 @@ floatPLet0 t = case splitPLet t of
       (psf, tf') = floatPLet0 tf
       (psas, tas') = unzip $ map floatPLet0 tas
       (psC, psR) = joinPLetss $ psf : psas
-      in (psR, foldr (applyPLet . eTerm) (NVTApp tf' tas') psC)
+      in (psR, foldr (applyPLet . pletNVTT) (NVTApp tf' tas') psC)
     NVTLam v tb -> case floatPLet0 tb of
       (ps, tb') -> (filter ((unV v `IntSet.notMember`) . pletFVars) ps, NVTLam v tb')
     NVTLit _ -> ([], t)
@@ -157,13 +157,13 @@ floatPLet0 t = case splitPLet t of
       (psb, tb') -> let psb' = filter ((unV v `IntSet.notMember`) . pletFVars) psb
         in case floatPLet0 te of
         (pse, te') -> case joinPLets pse psb' of
-          (ps, ps') -> (ps', foldr (applyPLet . eTerm) (NVTLet v te' tb') ps)
+          (ps, ps') -> (ps', foldr (applyPLet . pletNVTT) (NVTLet v te' tb') ps)
     NVTCase i ct dft alts -> case floatPLet0 dft of
       (psdft, dft') -> case unzip $ map h alts of
         (pairs, alts') -> case unzip pairs of
           (psCs, psRs) -> case joinPLetss psRs of
             (psC, psR) -> let psC' = nub $ concat (psCs ++ [psC]) -- \unfinished
-              in (psR, foldr (applyPLet . eTerm) (NVTCase i ct dft' alts') psC')
+              in (psR, foldr (applyPLet . pletNVTT) (NVTCase i ct dft' alts') psC')
     NVTUnit -> ([], t)
     NVTSort -> ([], t)
     NVTErased -> ([], t)
@@ -182,8 +182,8 @@ floatPLet0 t = case splitPLet t of
 -- |matchPLet p1 p2 = Just m| means that |p1| is a prefix of |p2|,
 -- and |m| rnames |p1|-variables to |p2|variables.
 matchPLet :: PLet -> PLet -> Maybe (IntMap Var)
-matchPLet p1 p2 = case eTerm p1 of
-  NVTLet v1 e1 b1 -> case eTerm p2 of
+matchPLet p1 p2 = case pletNVTT p1 of
+  NVTLet v1 e1 b1 -> case pletNVTT p2 of
     NVTLet v2 e2 b2 | e1 == e2 -> IntMap.insert (unV v1) v2 <$> matchCase b1 b2
     _ -> Nothing
   _ -> Nothing
@@ -207,7 +207,7 @@ squashPLet :: [PLet] -> NVTTerm -> NVTTerm
 squashPLet ps t = case splitPLet t of
   Just (p, t') -> case msum $ map (matchPLet p) ps of
     Just m -> squashPLet ps $ renameNVTTerm m t'
-    Nothing -> applyPLet (eTerm p) $ squashPLet (p : ps) t'
+    Nothing -> applyPLet (pletNVTT p) $ squashPLet (p : ps) t'
   Nothing -> case t of
     NVTVar _ -> t
     NVTPrim _ -> t
