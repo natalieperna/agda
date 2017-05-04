@@ -215,9 +215,9 @@ library
                     Agda.Compiler.Treeless.EliminateDefaults
                     Agda.Compiler.Treeless.EliminateLiteralPatterns
                     Agda.Compiler.Treeless.Erase
+                    Agda.Compiler.Treeless.SplitPLet
                     Agda.Compiler.Treeless.NVTTerm
                     Agda.Compiler.Treeless.FloatPLetNV
-                    Agda.Compiler.Treeless.FloatPLet
                     Agda.Compiler.Treeless.GuardsToPrims
                     Agda.Compiler.Treeless.Identity
                     Agda.Compiler.Treeless.NormalizeNames

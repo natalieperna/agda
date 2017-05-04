@@ -39,7 +39,7 @@ import Agda.Compiler.MAlonzo.Pragmas
 import Agda.Compiler.ToTreeless
 import Agda.Compiler.Treeless.Unused
 import Agda.Compiler.Treeless.Erase
-import qualified Agda.Compiler.Treeless.FloatPLet as FloatPLet
+import Agda.Compiler.Treeless.SplitPLet
 import Agda.Compiler.Backend
 
 import Agda.Interaction.FindFile
@@ -553,7 +553,7 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
 
   TLet _ (TCase 0 _ _ [TACon _ _ _])
     | genPLet
-    , Just (FloatPLet.PLet {pletNumBinders = numBinders, eTerm = TLet t1 tp}, tb) <- FloatPLet.splitPLet tm0
+    , Just (PLet {pletNumBinders = numBinders, eTerm = TLet t1 tp}, tb) <- splitPLet tm0
     -> do
         t1' <- term t1
         intros 1 $ \[x] -> do

@@ -14,8 +14,10 @@ module Agda.Syntax.Treeless
 import Control.Arrow (first, second)
 
 import Data.Map (Map)
+import Data.IntSet (IntSet)
 import Data.Typeable (Typeable)
 
+import Agda.Syntax.Common (Nat)
 import Agda.Syntax.Position
 import Agda.Syntax.Literal
 import Agda.Syntax.Abstract.Name
@@ -191,3 +193,14 @@ instance Unreachable TTerm where
 instance KillRange Compiled where
   killRange c = c -- bogus, but not used anyway
 
+
+-- a TTerm prefix that can be translated into a pattern let binding,
+-- encoded as a TTerm delimited by TErase.
+-- Always an instance of the pattern @TLet t1 (TCase 0 _ _ [TACon _ _ p])@,
+-- with @p@ only consisting of further single-alternative @TCase@s
+-- until terminated by a @TErase@.
+data PLet = PLet
+  { pletFreeVars :: IntSet
+  , pletNumBinders :: Nat  -- number of all binders on the spine of |eTerm|
+  , eTerm :: TTerm
+  } deriving (Eq, Ord, Show)
