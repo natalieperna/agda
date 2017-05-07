@@ -26,7 +26,7 @@ import Agda.Utils.Impossible
 -- The first argument to @applyPLet@ is a pattern-let prefix,
 -- that is, a TTerm prefix that can be translated into a pattern let binding,
 -- encoded as a TTerm delimited by TErase, see @data PLet@ in @Syntax.Treeless@.
--- 
+--
 -- The call @applyPLet pl t@  substitutes @t@ for the @TErased@ in @pl@..
 applyPLet :: TTerm -> TTerm -> TTerm
 applyPLet (TLet t1 b) a = TLet t1 $ h b
@@ -74,3 +74,26 @@ harmlessTT TUnit       = True
 harmlessTT TErased     = True
 harmlessTT TSort       = True
 harmlessTT _           = False
+
+tPLetView :: TTerm -> ([PLet], TTerm)
+tPLetView = h id
+  where
+    h acc t = case splitPLet t of
+      Nothing -> (acc [], t)
+      Just (plet, t') -> h (acc . (plet :)) t'
+
+splitPLets :: TTerm -> Maybe ([PLet], TTerm)
+splitPLets t = do
+  (plet, t')  <- splitPLet t
+  let (plets, t'') = tPLetView t'
+  Just (plet : plets, t'')
+
+extractCrossCallFloat :: TTerm -> Maybe CrossCallFloat
+extractCrossCallFloat t = case tLamView t of
+   (varNum, t') -> do
+     (plets, b) <- splitPLets t'
+     Just $ CrossCallFloat
+       { ccfLambdaLen = varNum
+       , ccfPLets = plets
+       , ccfBody = b
+       }

@@ -24,7 +24,8 @@ import Agda.Syntax.Abstract.Name
 
 data Compiled = Compiled
   { cTreeless :: TTerm
-  , cArgUsage :: [Bool] }
+  , cArgUsage :: [Bool]
+  , cCrossCallFloat :: Maybe CrossCallFloat }
   deriving (Typeable, Show, Eq, Ord)
 
 type Args = [TTerm]
@@ -203,4 +204,12 @@ data PLet = PLet
   { pletFreeVars :: IntSet
   , pletNumBinders :: Nat  -- number of all binders on the spine of |eTerm|
   , eTerm :: TTerm
-  } deriving (Eq, Ord, Show)
+  } deriving (Typeable, Show, Eq, Ord)
+
+-- For one field of @Compiled@, caching the factoring of |cTreeless|
+-- over @PLet@s that can be floated out
+data CrossCallFloat = CrossCallFloat
+   { ccfLambdaLen :: Nat
+   , ccfPLets :: [PLet]
+   , ccfBody :: TTerm
+   } deriving (Typeable, Show, Eq, Ord)
