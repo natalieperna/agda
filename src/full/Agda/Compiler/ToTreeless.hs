@@ -34,6 +34,7 @@ import Agda.Compiler.Treeless.Unused
 import Agda.Compiler.Treeless.AsPatterns
 import Agda.Compiler.Treeless.Identity
 import Agda.Compiler.Treeless.CaseSquash
+import Agda.Compiler.Treeless.SplitPLet (extractCrossCallFloat)
 import Agda.Compiler.Treeless.FloatPLetNV
 
 import Agda.Syntax.Common
@@ -129,6 +130,7 @@ ccToTreeless q cc = do
   reportSDoc "treeless.opt.final" (20 + v) $ pbody body
   setTreeless q body
   setCompiledArgUse q used
+  maybe (return ()) (setCompiledCrossCallFloat q) $ extractCrossCallFloat body
   return body
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm

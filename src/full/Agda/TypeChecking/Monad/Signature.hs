@@ -25,7 +25,7 @@ import Agda.Syntax.Common
 import Agda.Syntax.Internal as I
 import Agda.Syntax.Internal.Names
 import Agda.Syntax.Position
-import Agda.Syntax.Treeless (Compiled(..), TTerm)
+import Agda.Syntax.Treeless (Compiled(..), CrossCallFloat(), TTerm)
 
 import Agda.TypeChecking.Monad.Base
 import Agda.TypeChecking.Monad.Context
@@ -694,7 +694,7 @@ modifyArgOccurrences d f =
 setTreeless :: QName -> TTerm -> TCM ()
 setTreeless q t =
   modifyGlobalDefinition q $ updateTheDef $ \case
-    fun@Function{} -> fun{ funTreeless = Just $ Compiled t [] }
+    fun@Function{} -> fun{ funTreeless = Just $ Compiled t [] Nothing }
     _ -> __IMPOSSIBLE__
 
 setCompiledArgUse :: QName -> [Bool] -> TCM ()
@@ -709,6 +709,13 @@ getCompiled q = do
   (theDef <$> getConstInfo q) <&> \case
     Function{ funTreeless = t } -> t
     _                           -> Nothing
+
+setCompiledCrossCallFloat :: QName -> CrossCallFloat -> TCM ()
+setCompiledCrossCallFloat q ccf =
+  modifyGlobalDefinition q $ updateTheDef $ \case
+    fun@Function{} ->
+      fun{ funTreeless = for (funTreeless fun) $ \ c -> c { cCrossCallFloat = Just ccf } }
+    _ -> __IMPOSSIBLE__
 
 getErasedConArgs :: QName -> TCM [Bool]
 getErasedConArgs q = do
