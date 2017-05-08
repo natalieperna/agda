@@ -735,6 +735,9 @@ getTreeless q = fmap cTreeless <$> getCompiled q
 getCompiledArgUse :: QName -> TCM [Bool]
 getCompiledArgUse q = maybe [] cArgUsage <$> getCompiled q
 
+getCrossCallFloat :: QName -> TCM (Maybe CrossCallFloat)
+getCrossCallFloat q = maybe Nothing cCrossCallFloat <$> getCompiled q
+
 -- | Get the mutually recursive identifiers of a symbol from the signature.
 getMutual :: QName -> TCM (Maybe [QName])
 getMutual d = getMutual_ . theDef <$> getConstInfo d

@@ -130,7 +130,19 @@ ccToTreeless q cc = do
   reportSDoc "treeless.opt.final" (20 + v) $ pbody body
   setTreeless q body
   setCompiledArgUse q used
-  maybe (return ()) (setCompiledCrossCallFloat q) $ extractCrossCallFloat body
+  doAbstractPLet <- optAbstractPLet <$> commandLineOptions
+  if doAbstractPLet
+    then case extractCrossCallFloat body of
+      Nothing ->         -- return ()
+        reportSDoc "treeless.opt.abstractPLet" (40 + v) $
+          text "AbstractPLet: No PLet found:" <+> pbody body
+      Just ccf -> do
+        setCompiledCrossCallFloat q ccf
+        reportSDoc "treeless.opt.abstractPLet" (30 + v) $
+          text ("-- ccfLambdaLen = " ++ show (C.ccfLambdaLen ccf))
+            <+> text (" length ccfPLets = " ++ show (length $ C.ccfPLets ccf))
+            $$ pbody' "[inside plets]" (C.ccfBody ccf)
+    else return ()
   return body
 
 closedTermToTreeless :: I.Term -> TCM C.TTerm
