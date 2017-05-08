@@ -355,6 +355,7 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
     e <- if dostrip then closedTerm genPLet (stripUnusedArguments used treeless)
                     else closedTerm genPLet treeless
     let (ps, b) = lamView e
+        lamView :: HS.Exp -> ([HS.Pat], HS.Exp)
         lamView e =
           case stripTopCoerce e of
             HS.Lambda ps b -> (ps, b)
@@ -371,10 +372,61 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
     (ps0, _) <- lamView <$> closedTerm genPLet (foldr ($) T.TErased $ replicate (length used) T.TLam)
     let b0 = foldl HS.App (hsVarUQ $ duname q) [ hsVarUQ x | (~(HS.PVar x), True) <- zip ps0 used ]
 
-    return $ if dostrip
-      then [ funbind (dname q) ps0 b0
-           , funbind (duname q) ps b ]
-      else [ funbind (dname q) ps b ]
+    mCCF <- getCrossCallFloat q
+    let patVars :: HS.Pat -> [HS.Name] -> [HS.Name] -- difference list
+        patVars (HS.PVar v) = (v :)
+        patVars (HS.PLit _) = id
+        patVars (HS.PAsPat v p) = (v :) . patVars p
+        patVars HS.PWildCard = id
+        patVars (HS.PBangPat p) = patVars p
+        patVars (HS.PApp _c ps) = foldr patVars `flip` ps
+        patVars (HS.PatTypeSig p _ty) = patVars p
+        patVars (HS.PIrrPat p) = patVars p
+        patExpr :: HS.Pat -> HS.Exp
+        patExpr (HS.PVar v) = HS.Var $ HS.UnQual v
+        patExpr (HS.PLit lit) = HS.Lit lit
+        patExpr (HS.PAsPat v p) = HS.Var $ HS.UnQual v
+        patExpr HS.PWildCard = __IMPOSSIBLE__
+        patExpr (HS.PBangPat p) = patExpr p
+        patExpr (HS.PApp c ps) = foldl (\ f p -> HS.App f $ patExpr p) (HS.Var c) ps
+        patExpr (HS.PatTypeSig p ty) = HS.ExpTypeSig (patExpr p) ty
+        patExpr (HS.PIrrPat p) = patExpr p
+    let pbindsView :: [HS.Decl] -> ([HS.Name], [HS.Decl], [HS.Decl])
+        pbindsView = h id id
+            where
+               h accv accp (pb@(HS.PatBind pat _ _) : binds)
+                 = h (accv . patVars pat) (accp . (pb :)) binds
+               h accv accp binds = (accv [], accp [], binds)
+
+        pletView :: HS.Exp -> ([HS.Name], [HS.Decl], HS.Exp)
+        pletView e = case stripTopCoerce e of
+          HS.Let (HS.BDecls ds) b
+            | (pvars, pbinds, binds') <- pbindsView ds
+            -> (pvars, pbinds, (if null binds' then id else HS.Let (HS.BDecls binds')) b)
+          _ -> ([], [], e)
+    let mdv = case mCCF of
+            Nothing -> Nothing
+            Just ccf -> let
+              (hspvars, hspbinds, hsbody) = pletView b
+              qdv = dvname q
+              dvcall = case stripTopCoerce hsbody of
+                 HS.Var (HS.UnQual v) | v `elem` foldr patVars hspvars ps -> hsbody
+                 _ -> foldl  (\ f p -> HS.App f $ patExpr p) (HS.Var $ HS.UnQual qdv)
+                             $ ps ++ map HS.PVar hspvars
+              dvbinding =funbind qdv (ps ++ map HS.PVar hspvars) hsbody
+              dubody = foldr (\ b -> HS.Let (HS.BDecls [b])) dvcall hspbinds
+             in Just (dubody, dvbinding)
+    return $ case mdv of
+      Nothing -> if dostrip
+        then [ funbind (dname q) ps0 b0
+             , funbind (duname q) ps b ]
+        else [ funbind (dname q) ps b ]
+      Just (dubody, dvbinding) -> if dostrip
+        then [ funbind (dname q) ps0 b0
+             , funbind (duname q) ps dubody
+             , dvbinding ]
+        else [ funbind (dname q) ps dubody
+             , dvbinding ]
 
   mkwhere :: [HS.Decl] -> [HS.Decl]
   mkwhere (HS.FunBind [m0, HS.Match dn ps rhs emptyBinds] : fbs@(_:_)) =

@@ -102,6 +102,10 @@ dname q = unqhname "d" q
 duname :: QName -> HS.Name
 duname q = unqhname "du" q
 
+-- | Name for definition with pattern let variables abstracted
+dvname :: QName -> HS.Name
+dvname q = unqhname "dv" q
+
 hsPrimOp :: String -> HS.QOp
 hsPrimOp s = HS.QVarOp $ HS.UnQual $ HS.Symbol s
 
