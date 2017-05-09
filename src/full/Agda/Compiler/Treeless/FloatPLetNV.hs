@@ -14,7 +14,7 @@ import qualified Data.IntMap as IntMap
 import Data.IntMap (IntMap)
 
 import Agda.Syntax.Common
-import Agda.Syntax.Treeless hiding (PLet(..))
+import Agda.Syntax.Treeless as T hiding (PLet(..))
 import Agda.Syntax.Literal
 import Agda.Syntax.Position
 import Agda.Syntax.Fixity
@@ -39,13 +39,14 @@ data PLet = PLet
   } deriving (Show)
 
 corePLet :: PLet -> (IntSet, NVTTerm) -- let-body only
-corePLet (PLet fv1 _ (NVTLet _ t1 _)) = (fv1, t1)
-corePLet _ = __IMPOSSIBLE__
+corePLet (PLet {pletFVars = fv1, pletNVTT = NVTLet _ t1 _})
+            = (fv1, t1)
+corePLet _  = __IMPOSSIBLE__
 
 eqPLet :: PLet -> PLet -> Bool
 eqPLet = (==) `on` corePLet
 
-instance Eq PLet where (==) = eqPLet
+instance Eq PLet where (==) = eqPLet -- used for @`elem`@ etc. below!
 
 applyPLet :: NVTTerm -> NVTTerm -> NVTTerm
 applyPLet (NVTLet v t1 b) a = NVTLet v t1 $ h b
@@ -123,16 +124,6 @@ joinPLetss (ps : pss) = case joinPLetss pss of
   (psC, psR) -> case joinPLets ps psR of
     (psC', psR') -> (filter (`notElem` psC) psC' ++ psC, psR')
 
-mkRename :: [Var] -> [Var] -> Maybe (IntMap Var)
-mkRename vs1 vs2 = case filter (uncurry (/=)) $ zip vs1 vs2 of
-  [] -> Nothing
-  ps -> Just $ foldr (uncurry (IntMap.insert . unV)) IntMap.empty ps
-
-renameNVTTerm' :: [Var] -> [Var] -> NVTTerm -> NVTTerm
-renameNVTTerm' vs1 vs2 t = case mkRename vs1 vs2 of
-  Nothing -> t
-  Just m -> renameNVTTerm m t
-
 -- | @floatPLet0@ duplicates PLet occurrences at join points.
 floatPLet0 :: NVTTerm -> ([PLet], NVTTerm)
 floatPLet0 t = case splitPLet t of
@@ -181,10 +172,10 @@ floatPLet0 t = case splitPLet t of
 
 -- |matchPLet p1 p2 = Just m| means that |p1| is a prefix of |p2|,
 -- and |m| rnames |p1|-variables to |p2|variables.
-matchPLet :: PLet -> PLet -> Maybe (IntMap Var)
+matchPLet :: PLet -> PLet -> Maybe NVRename
 matchPLet p1 p2 = case pletNVTT p1 of
   NVTLet v1 e1 b1 -> case pletNVTT p2 of
-    NVTLet v2 e2 b2 | e1 == e2 -> IntMap.insert (unV v1) v2 <$> matchCase b1 b2
+    NVTLet v2 e2 b2 | e1 == e2 -> insertNVRename v1 v2 <$> matchCase b1 b2
     _ -> Nothing
   _ -> Nothing
 
@@ -192,21 +183,19 @@ matchesPLet :: PLet -> PLet -> Bool
 matchesPLet p1 p2 = isJust $ matchPLet p1 p2
 
 
-matchCase :: NVTTerm -> NVTTerm -> Maybe (IntMap Var)
+matchCase :: NVTTerm -> NVTTerm -> Maybe NVRename
 matchCase  (NVTCase v1 ct1 dft1 [NVTACon c1 cvars1 b1])
            (NVTCase v2 ct2 dft2 [NVTACon c2 cvars2 b2])
   | c1 == c2 && harmless dft1 && harmless dft2
-  = case matchCase b1 b2 of
-    Nothing -> Nothing 
-    Just m -> Just . foldr (uncurry (IntMap.insert . unV)) m $ zip cvars1 cvars2
-matchCase NVTErased _ = Just IntMap.empty
+  = zipInsertNVRename cvars1 cvars2 <$> matchCase b1 b2
+matchCase NVTErased _ = Just emptyNVRename
 matchCase _ _ = Nothing
 
 -- |squashPLet| is to be called after |floatPLet0|
 squashPLet :: [PLet] -> NVTTerm -> NVTTerm
 squashPLet ps t = case splitPLet t of
   Just (p, t') -> case msum $ map (matchPLet p) ps of
-    Just m -> squashPLet ps $ renameNVTTerm m t'
+    Just r -> squashPLet ps $ renameNVTTerm r t'
     Nothing -> applyPLet (pletNVTT p) $ squashPLet (p : ps) t'
   Nothing -> case t of
     NVTVar _ -> t
