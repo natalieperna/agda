@@ -5,4 +5,16 @@ import qualified Agda.Utils.Haskell.Syntax as HS
 import Agda.Syntax.Treeless (TTerm)
 import Agda.TypeChecking.Monad (TCM)
 
-closedTerm :: Bool -> TTerm -> TCM HS.Exp
+data GHCOptions = GHCOptions
+  { optGhcCompile :: Bool
+  , optGhcCallGhc :: Bool
+  , optGhcFlags   :: [String]
+  , optGhcGeneratePatternLet :: Bool
+  }
+
+defaultGHCOptions :: GHCOptions
+
+closedTerm :: GHCOptions -> TTerm -> TCM HS.Exp
+
+-- WK: Should we only have a declaration for
+--        |closedTerm' = closedTerm defaultGHCOptions| here?
