@@ -377,3 +377,28 @@ attachNVConPat v cp (NVPAsCon v' cp'@(NVConPat ct dft c ps))
       h (p : ps') = case attachNVConPat v cp p of
         Nothing -> (p :) <$> h ps'
         Just p' -> Just $ p' : ps' -- patterns are linear: each variable occurs only once.
+
+
+matchNVPat :: NVPat -> NVPat -> Maybe NVRename
+matchNVPat p1 p2 = matchNVPat0 p1 p2 emptyNVRename
+
+matchNVPat0 :: NVPat -> NVPat -> NVRename -> Maybe NVRename
+matchNVPat0 p1 p2 r@(NVRename m)
+   | v1@(V i1) <- getNVPatVar p1
+   , v2@(V i2) <- getNVPatVar p2
+  = case IntMap.lookup i1 m of
+  Just v2' ->    if v2 == v2'  then Just r
+                               else Nothing -- clash
+  Nothing -> case p1 of
+    NVPVar _v1 -> Just $ insertNVRename v1 v2 r
+    NVPAsCon _v1 (NVConPat ct1 dft1 c1 ps1) -> case p2 of
+      NVPVar _v2 -> Nothing -- \edcomm{WK}{CHeck this again later!}
+      NVPAsCon _v2 (NVConPat ct2 dft2 c2 ps2) -> if c1 /= c2
+        then Nothing
+        else matchNVPats ps1 ps2 r
+
+matchNVPats :: [NVPat] -> [NVPat] -> NVRename -> Maybe NVRename
+matchNVPats [] [] r = Just r
+matchNVPats (p1 : ps1) (p2 : ps2) r  =    matchNVPat0 p1 p2 r
+                                     >>=  matchNVPats ps1 ps2
+matchNVPats _ _ _ = Nothing
