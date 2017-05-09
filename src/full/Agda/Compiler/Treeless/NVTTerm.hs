@@ -4,6 +4,7 @@ module Agda.Compiler.Treeless.NVTTerm where
 -- A variant of |TTerm| using named variables.
 
 import Control.Applicative
+import Control.Monad.Identity (runIdentity)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Monoid
@@ -111,20 +112,20 @@ eqNVTTerm = eqT IntMap.empty
 
 
 fromTTerm' :: TTerm -> NVTTerm
-fromTTerm' t = evalState (fromTTerm [] t) 0
+fromTTerm' t = runIdentity $ evalStateT (fromTTerm [] t) 0
 
-type U = State Int
+type U m = StateT Int m
 
-getVar :: U Var
+getVar :: Monad m => U m Var
 getVar = do
   i <- get
   put $ succ i
   return $ V i
 
-getVars :: Int -> U [Var]
+getVars :: Monad m => Int -> U m [Var]
 getVars k = sequence $ replicate k getVar
 
-fromTTerm :: [Var] -> TTerm -> U NVTTerm
+fromTTerm :: Monad m => [Var] -> TTerm -> U m NVTTerm
 fromTTerm vs (TVar k) = return $ NVTVar (vs !! k)
 fromTTerm vs (TPrim p) = return $ NVTPrim p
 fromTTerm vs (TDef var name) = return $ NVTDef var' name
@@ -150,7 +151,7 @@ fromTTerm vs TSort = return NVTSort
 fromTTerm vs TErased = return NVTErased
 fromTTerm vs (TError t) = return $ NVTError t
 
-fromTAlt :: [Var] -> TAlt -> U NVTAlt
+fromTAlt :: Monad m => [Var] -> TAlt -> U m NVTAlt
 fromTAlt vs (TACon name arity b) = do
   cvars <- getVars arity
   b' <- fromTTerm (reverse cvars ++ vs) b
