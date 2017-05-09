@@ -36,7 +36,7 @@ type Args = [TTerm]
 -- All local variables are using de Bruijn indices.
 data TTerm = TVar Int
            | TPrim TPrim
-           | TDef QName
+           | TDef TDefVariant QName
            | TApp TTerm Args
            | TLam TTerm
            | TLit Literal
@@ -194,6 +194,11 @@ instance Unreachable TTerm where
 instance KillRange Compiled where
   killRange c = c -- bogus, but not used anyway
 
+-- ``Flavour'' of @TDef@
+data TDefVariant
+  = TDefDefault             -- traditional variants: "du*" or "d*"
+  | TDefAbstractPLet [Nat]  -- additional variable arguments for "dv*" variant.
+  deriving (Typeable, Eq, Ord, Show)
 
 -- a TTerm prefix that can be translated into a pattern let binding,
 -- encoded as a TTerm delimited by TErase.

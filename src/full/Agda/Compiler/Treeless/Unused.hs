@@ -37,7 +37,7 @@ computeUnused q t used = do
       TLit{}    -> pure Set.empty
       TCon{}    -> pure Set.empty
 
-      TApp (TDef f) ts -> do
+      TApp (TDef _ f) ts -> do
         used <- getCompiledArgUse f
         Set.unions <$> sequence [ go t | (t, True) <- zip ts $ used ++ repeat True ]
 
@@ -68,4 +68,3 @@ stripUnusedArguments used t = mkTLam m $ applySubst rho b
     computeSubst (False : bs) = TErased :# computeSubst bs
     computeSubst (True  : bs) = liftS 1 $ computeSubst bs
     computeSubst []           = idS
-

@@ -23,9 +23,9 @@ normalizeNames :: TTerm -> TCM TTerm
 normalizeNames = tr
   where
     tr t = case t of
-      TDef q -> do
+      TDef variant q -> do
         q' <- defName <$> getConstInfo q
-        return $ TDef q'
+        return $ TDef variant q' -- \edcomm{WK}{Is this really independent of |variant|?}
       TVar{}    -> done
       TCon{}    -> done
       TPrim{}   -> done

@@ -54,7 +54,7 @@ ihname s i = HS.Ident $ s ++ show i
 
 unqhname :: String -> QName -> HS.Name
 {- NOT A GOOD IDEA, see Issue 728
-unqhname s q | ("d", "main") == (s, show(qnameName q)) = HS.Ident "main"
+unqhname s q | (dPrefix, "main") == (s, show(qnameName q)) = HS.Ident "main"
              | otherwise = ihname s (idnum $ nameId $ qnameName $ q)
 -}
 unqhname s q = ihname s (idnum $ nameId $ qnameName $ q)
@@ -96,15 +96,21 @@ bltQual b s = do
   xqual q (HS.Ident s)
 
 dname :: QName -> HS.Name
-dname q = unqhname "d" q
+dname q = unqhname dPrefix q
+dPrefix :: String
+dPrefix = "d"
 
 -- | Name for definition stripped of unused arguments
 duname :: QName -> HS.Name
-duname q = unqhname "du" q
+duname q = unqhname duPrefix q
+duPrefix :: String
+duPrefix = "du"
 
 -- | Name for definition with pattern let variables abstracted
 dvname :: QName -> HS.Name
-dvname q = unqhname "dv" q
+dvname q = unqhname dvPrefix q
+dvPrefix :: String
+dvPrefix = "dv"
 
 hsPrimOp :: String -> HS.QOp
 hsPrimOp s = HS.QVarOp $ HS.UnQual $ HS.Symbol s
@@ -220,7 +226,7 @@ fakeDS :: String -> String -> HS.Decl
 fakeDS = fakeD . HS.Ident
 
 fakeDQ :: QName -> String -> HS.Decl
-fakeDQ = fakeD . unqhname "d"
+fakeDQ = fakeD . unqhname dPrefix
 
 fakeType :: String -> HS.Type
 fakeType = HS.FakeType

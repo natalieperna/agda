@@ -134,7 +134,8 @@ floatPLet0 t = case splitPLet t of
   Nothing -> case t of
     NVTVar _ -> ([], t)
     NVTPrim _ -> ([], t)
-    NVTDef _ -> ([], t)
+    NVTDef NVTDefDefault name -> ([], t) -- \edcom{WK}{Look up, convert, and float |ccfPLets|!!}
+    NVTDef (NVTDefAbstractPLet _) _ -> ([], t) -- unlikely to be encountered
     NVTApp tf tas -> let
       (psf, tf') = floatPLet0 tf
       (psas, tas') = unzip $ map floatPLet0 tas
@@ -200,7 +201,10 @@ squashPLet ps t = case splitPLet t of
   Nothing -> case t of
     NVTVar _ -> t
     NVTPrim _ -> t
-    NVTDef _ -> t
+    NVTDef NVTDefDefault name
+      | False -- \edcomm{WK}{Criteria for choosing |dv| and supplying variables!}
+      -> NVTDef (NVTDefAbstractPLet undefined) name
+    NVTDef _ _ -> t
     NVTApp tf tas -> NVTApp (squashPLet ps tf) (map (squashPLet ps) tas)
     NVTLam v tb -> NVTLam v $ squashPLet ps tb
     NVTLit _ -> t

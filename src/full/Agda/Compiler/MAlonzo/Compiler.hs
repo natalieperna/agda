@@ -267,7 +267,7 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
       -- Special treatment of coinductive builtins.
       Datatype{} | Just q == (nameOfInf <$> kit) -> do
         let infT = unqhname "T" q
-            infV = unqhname "d" q
+            infV = unqhname dPrefix q
             a    = ihname "a" 0
             b    = ihname "a" 1
             vars = [a, b]
@@ -280,7 +280,7 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
                                       emptyBinds]
                ]
       Constructor{} | Just q == (nameOfSharp <$> kit) -> do
-        let sharp = unqhname "d" q
+        let sharp = unqhname dPrefix q
             x     = ihname "x" 0
         return $
           [ HS.TypeSig [sharp] $ fakeType $
@@ -291,7 +291,7 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
                                  emptyBinds]
           ]
       Function{} | Just q == (nameOfFlat <$> kit) -> do
-        let flat = unqhname "d" q
+        let flat = unqhname dPrefix q
             x    = ihname "x" 0
         return $
           [ HS.TypeSig [flat] $ fakeType $
@@ -439,10 +439,10 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
 
   fbWithType :: HaskellType -> HS.Exp -> [HS.Decl]
   fbWithType ty e =
-    [ HS.TypeSig [unqhname "d" q] $ fakeType ty ] ++ fb e
+    [ HS.TypeSig [unqhname dPrefix q] $ fakeType ty ] ++ fb e
 
   fb :: HS.Exp -> [HS.Decl]
-  fb e  = [HS.FunBind [HS.Match (unqhname "d" q) []
+  fb e  = [HS.FunBind [HS.Match (unqhname dPrefix q) []
                                 (HS.UnGuardedRhs $ e) emptyBinds]]
 
   axiomErr :: HS.Exp
@@ -566,24 +566,27 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
   T.TVar i -> do
     x <- lookupIndex i <$> asks ccCxt
     return $ hsVarUQ x
-  T.TApp (T.TDef f) ts -> do
+  T.TApp (T.TDef variant f) ts -> do
     used <- lift $ getCompiledArgUse f
     isCompiled <- lift $ isJust <$> getHaskellPragma f  -- #2248: no unused argument pruning for COMPILE'd functions
     let given   = length ts
         needed  = length used
         missing = drop given used
+        (prefix, us) = case variant of
+          T.TDefDefault -> (duPrefix, [])
+          T.TDefAbstractPLet vs -> (dvPrefix, map T.TVar vs)
     if not isCompiled && any not used
       then if any not missing then term (etaExpand (needed - given) tm0) else do
-        f <- lift $ HS.Var <$> xhqn "du" f  -- used stripped function
-        f `apps` [ t | (t, True) <- zip ts $ used ++ repeat True ]
+        f <- lift $ HS.Var <$> xhqn prefix f  -- used stripped function
+        f `apps` ([ t | (t, True) <- zip ts $ used ++ repeat True ] ++ us)
       else do
-        t' <- term (T.TDef f)
+        t' <- term (T.TDef variant f)
         t' `apps` ts
   T.TApp (T.TCon c) ts -> do
     kit <- lift coinductionKit
     if Just c == (nameOfSharp <$> kit)
       then do
-        t' <- HS.Var <$> lift (xhqn "d" c)
+        t' <- HS.Var <$> lift (xhqn dPrefix c)
         apps t' ts
       else do
         (ar, _) <- lift $ conArityAndPars c
@@ -629,8 +632,8 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
     return $ HS.Case (hsCast sc') (alts' ++ [defAlt])
 
   T.TLit l -> return $ literal l
-  T.TDef q -> do
-    HS.Var <$> (lift $ xhqn "d" q)
+  T.TDef _variant q -> do
+    HS.Var <$> (lift $ xhqn dPrefix q)
   T.TCon q   -> term (T.TApp (T.TCon q) [])
   T.TPrim p  -> return $ compilePrim p
   T.TUnit    -> return HS.unit_con
@@ -779,7 +782,7 @@ tvaldecl q ind ntv npar cds cl =
   maybe [HS.DataDecl kind tn tvs cds []]
         (const []) cl
   where
-  (tn, vn) = (unqhname "T" q, unqhname "d" q)
+  (tn, vn) = (unqhname "T" q, unqhname dPrefix q)
   tvs = [ HS.UnkindedVar $ ihname "a" i | i <- [0 .. ntv  - 1]]
   pvs = [ HS.PVar        $ ihname "a" i | i <- [0 .. npar - 1]]
 
