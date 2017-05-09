@@ -69,7 +69,7 @@ toTreeless' :: QName -> TCM C.TTerm
 toTreeless' q =
   flip fromMaybeM (getTreeless q) $ verboseBracket "treeless.convert" 20 ("compiling " ++ show q) $ do
     Just cc <- defCompiled <$> getConstInfo q
-    unlessM (alwaysInline q) $ setTreeless q (C.TDef q)
+    unlessM (alwaysInline q) $ setTreeless q (C.TDef C.TDefDefault q)
       -- so recursive inlining doesn't loop, but not for always inlined
       -- functions, since that would risk inlining to fail.
     ccToTreeless q cc
@@ -409,7 +409,7 @@ maybeInlineDef inlinedAncestors q vs =
             lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
             doinline inlinedAncestors
         | otherwise -> defaultCase
-      _ -> C.mkTApp (C.TDef q) <$> substArgs inlinedAncestors vs
+      _ -> C.mkTApp (C.TDef C.TDefDefault q) <$> substArgs inlinedAncestors vs
   where
     updatedAncestors = do
       def <- lift $ getConstInfo q
@@ -427,7 +427,7 @@ maybeInlineDef inlinedAncestors q vs =
             used <- lift $ getCompiledArgUse q
             let substUsed False _   = pure C.TErased
                 substUsed True  arg = substArg inlinedAncestors arg
-            C.mkTApp (C.TDef q) <$> sequence [ substUsed u arg | (arg, u) <- zip vs $ used ++ repeat True ]
+            C.mkTApp (C.TDef C.TDefDefault q) <$> sequence [ substUsed u arg | (arg, u) <- zip vs $ used ++ repeat True ]
 
 substArgs :: ProjInfo -> [Arg I.Term] -> CC [C.TTerm]
 substArgs = traverse . substArg

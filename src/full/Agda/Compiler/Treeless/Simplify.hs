@@ -86,7 +86,7 @@ simplify FunctionKit{..} = simpl
         v <- lookupVar x
         pure $ if isAtomic v then v else t
 
-      TApp (TDef f) [TLit (LitNat _ 0), m, n, m']
+      TApp (TDef _ f) [TLit (LitNat _ 0), m, n, m']
         -- div/mod are equivalent to quot/rem on natural numbers.
         | m == m', Just f == divAux -> simpl $ tOp PQuot n (tPlusK 1 m)
         | m == m', Just f == modAux -> simpl $ tOp PRem n (tPlusK 1 m)
@@ -263,7 +263,7 @@ simplify FunctionKit{..} = simpl
     isFalse (TCon c) = Just c == false
     isFalse _        = False
 
-    maybeMinusToPrim f@(TDef minus) es@[a, b]
+    maybeMinusToPrim f@(TDef _ minus) es@[a, b]
       | Just minus == natMinus = do
       b_a  <- rewrite' (tOp PLt b a)
       b_sa <- rewrite' (tOp PLt b (tOp PAdd (tInt 1) a))
@@ -405,4 +405,3 @@ toArith t = (0, [Pos t])
 
 simplArith :: TTerm -> TTerm
 simplArith = fromArith . toArith
-

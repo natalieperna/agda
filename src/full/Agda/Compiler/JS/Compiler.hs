@@ -355,7 +355,7 @@ compileTerm' kit t = go t
     go :: T.TTerm -> TCM Exp
     go t = case t of
       T.TVar x -> return $ Local $ LocalId x
-      T.TDef q -> do
+      T.TDef _ q -> do
         d <- getConstInfo q
         case theDef d of
           -- Datatypes and records are erased

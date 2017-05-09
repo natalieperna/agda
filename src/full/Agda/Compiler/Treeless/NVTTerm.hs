@@ -37,7 +37,7 @@ newtype Var = V {unV :: Int} deriving (Eq, Ord, Show)
 data NVTTerm
   = NVTVar Var
   | NVTPrim TPrim
-  | NVTDef QName
+  | NVTDef NVTDefVariant QName
   | NVTApp NVTTerm [NVTTerm]
   | NVTLam Var NVTTerm
   | NVTLit Literal
@@ -58,6 +58,12 @@ data NVTAlt
   | NVTALit Literal NVTTerm
   deriving (Show)
 
+-- ``Flavour'' of @NVTDef@, analogous to @TDefVariant@
+data NVTDefVariant
+  = NVTDefDefault             -- traditional variants: "du*" or "d*"
+  | NVTDefAbstractPLet [Var]  -- additional variable arguments for "dv*" variant.
+  deriving (Show)
+
 instance Eq NVTTerm where (==) = eqNVTTerm
 
 eqNVTTerm :: NVTTerm -> NVTTerm -> Bool
@@ -68,10 +74,20 @@ eqNVTTerm = eqT IntMap.empty
       Nothing -> i == j
       Just j' -> j == j'
 
+    eqVs :: IntMap Int -> [Var] -> [Var] -> Bool
+    eqVs m [] [] = True
+    eqVs m (u : us) (v : vs) = eqV m u v && eqVs m us vs
+    eqVs _ _ _ = False
+
+    eqVariant :: IntMap Int -> NVTDefVariant -> NVTDefVariant -> Bool
+    eqVariant _ NVTDefDefault NVTDefDefault = True
+    eqVariant m (NVTDefAbstractPLet us) (NVTDefAbstractPLet vs) = eqVs m us vs
+    eqVariant _ _ _ = False
+
     eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool
     eqT m (NVTVar v) (NVTVar v') = eqV m v v'
     eqT m (NVTPrim p) (NVTPrim p') = p == p'
-    eqT m (NVTDef n) (NVTDef n') = n == n'
+    eqT m (NVTDef var n) (NVTDef var' n') = n == n' && eqVariant m var var'
     eqT m (NVTApp f ts) (NVTApp f' ts') = and $ zipWith (eqT m) (f : ts) (f' : ts')
     eqT m (NVTLam (V i) b) (NVTLam (V j) b') = eqT (IntMap.insert i j m) b b'
     eqT m (NVTLit l) (NVTLit l') = l == l'
@@ -111,7 +127,11 @@ getVars k = sequence $ replicate k getVar
 fromTTerm :: [Var] -> TTerm -> U NVTTerm
 fromTTerm vs (TVar k) = return $ NVTVar (vs !! k)
 fromTTerm vs (TPrim p) = return $ NVTPrim p
-fromTTerm vs (TDef name) = return $ NVTDef name
+fromTTerm vs (TDef var name) = return $ NVTDef var' name
+  where
+    var' = case var of
+      TDefDefault -> NVTDefDefault
+      TDefAbstractPLet is -> NVTDefAbstractPLet $ map (vs !!) is
 fromTTerm vs (TApp f ts) = NVTApp <$> fromTTerm vs f <*> mapM (fromTTerm vs) ts
 fromTTerm vs (TLam b) = do
   v <- getVar
@@ -141,10 +161,17 @@ fromTAlt vs (TALit lit b) = NVTALit lit <$> fromTTerm vs b
 toTTerm' :: NVTTerm -> TTerm
 toTTerm' = toTTerm []
 
+fromVar :: Nat -> [Var] -> Var -> Nat -- first argument is __IMPOSSIBLE__
+fromVar err vs v = maybe err id $ elemIndex v vs
+
 toTTerm :: [Var] -> NVTTerm -> TTerm
-toTTerm vs (NVTVar v) = TVar (maybe __IMPOSSIBLE__ id $ elemIndex v vs)
+toTTerm vs (NVTVar v) = TVar (fromVar __IMPOSSIBLE__ vs v)
 toTTerm vs (NVTPrim p) = TPrim p
-toTTerm vs (NVTDef name) = TDef name
+toTTerm vs (NVTDef var name) = TDef var' name
+  where
+    var' = case var of
+      NVTDefDefault -> TDefDefault
+      NVTDefAbstractPLet us -> TDefAbstractPLet $ map (fromVar __IMPOSSIBLE__ vs) us
 toTTerm vs (NVTApp f ts) = TApp (toTTerm vs f) (map (toTTerm vs) ts)
 toTTerm vs (NVTLam v b) = TLam $ toTTerm (v : vs) b
 toTTerm vs (NVTLit lit) = TLit lit
@@ -169,7 +196,8 @@ toTAlt vs (NVTALit lit b) = TALit lit (toTTerm vs b)
 fvarsNVTTerm :: NVTTerm -> IntSet
 fvarsNVTTerm (NVTVar (V i)) = IntSet.singleton i
 fvarsNVTTerm (NVTPrim p) = IntSet.empty
-fvarsNVTTerm (NVTDef name) = IntSet.empty
+fvarsNVTTerm (NVTDef NVTDefDefault name) = IntSet.empty
+fvarsNVTTerm (NVTDef (NVTDefAbstractPLet vs) name) = IntSet.fromList $ map unV vs
 fvarsNVTTerm (NVTApp f ts) = IntSet.unions $ fvarsNVTTerm f : map fvarsNVTTerm ts
 fvarsNVTTerm (NVTLam (V i) b) = IntSet.delete i $ fvarsNVTTerm b
 fvarsNVTTerm (NVTLit lit) = IntSet.empty
@@ -190,7 +218,7 @@ fvarsNVTAlt (NVTALit lit b) = fvarsNVTTerm b
 bvarsNVTTerm :: NVTTerm -> IntSet
 bvarsNVTTerm (NVTVar v) = IntSet.empty
 bvarsNVTTerm (NVTPrim p) = IntSet.empty
-bvarsNVTTerm (NVTDef name) = IntSet.empty
+bvarsNVTTerm (NVTDef _ name) = IntSet.empty
 bvarsNVTTerm (NVTApp f ts) = IntSet.unions $ bvarsNVTTerm f : map bvarsNVTTerm ts
 bvarsNVTTerm (NVTLam (V i) b) = IntSet.insert i $ bvarsNVTTerm b
 bvarsNVTTerm (NVTLit lit) = IntSet.empty
@@ -244,7 +272,9 @@ renameNVTTerm r@(NVRename m) t
     renTTerm :: NVRename -> NVTTerm -> NVTTerm
     renTTerm r (NVTVar v) = NVTVar $ renameVar r v
     renTTerm r t@(NVTPrim _) = t
-    renTTerm r t@(NVTDef _) = t
+    renTTerm r t@(NVTDef NVTDefDefault _) = t
+    renTTerm r (NVTDef (NVTDefAbstractPLet vs) name)
+      = NVTDef (NVTDefAbstractPLet $ map (renameVar r) vs) name
     renTTerm r (NVTApp f ts) = NVTApp (renTTerm r f) (map (renTTerm r) ts)
     renTTerm r (NVTLam v b) = let
       r'@(NVRename m') = deleteNVRename v r

@@ -87,7 +87,8 @@ transform BuiltinKit{..} = tr
              | isPos c    -> TLam (TVar 0)
              | isNegSuc c -> TLam $ tNegPlusK 1 (TVar 0)
 
-      TDef f | isPlus f   -> TPrim PAdd
+      TDef _ f
+             | isPlus f   -> TPrim PAdd
              | isTimes f  -> TPrim PMul
              | isLess f   -> TPrim PLt
              | isEqual f  -> TPrim PEqI
@@ -95,7 +96,7 @@ transform BuiltinKit{..} = tr
         --       builtin minus is monus. The simplifier will do it if it can see
         --       that it won't underflow.
 
-      TApp (TDef q) [_, _, _, _, e, f]
+      TApp (TDef _ q) [_, _, _, _, e, f]
         | isForce q -> tr $ TLet e $ tOp PSeq (TVar 0) $ mkTApp (raise 1 f) [TVar 0]
 
       TApp (TCon s) [e] | isSuc s ->

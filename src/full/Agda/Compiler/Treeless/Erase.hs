@@ -77,12 +77,12 @@ eraseTerms q = runE . eraseTop q
           Empty    -> pure TErased
           _        -> tApp (TCon c) <$> zipWithM eraseRel rs vs
 
-      TDef f : vs -> do
+      TDef variant f : vs -> do
         (rs, h) <- getFunInfo f
         case h of
           Erasable -> pure TErased
           Empty    -> pure TErased
-          _        -> tApp (TDef f) <$> zipWithM eraseRel (rs ++ repeat Relevant) vs
+          _        -> tApp (TDef variant f) <$> zipWithM eraseRel (rs ++ repeat Relevant) vs
 
       _ -> case t of
         TVar{}         -> pure t
@@ -252,4 +252,3 @@ getTypeInfo t0 = do
             I.Function{ funClauses = cs } ->
               sumTypeInfo <$> mapM (maybe (return Empty) (getTypeInfo . El Prop) . clauseBody) cs
             _ -> return NotErasable
-

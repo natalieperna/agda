@@ -53,7 +53,7 @@ recursiveIdentity q t =
 
         match TErased              _  = True
         match (TVar z)             y = z == y
-        match (TApp (TDef f) args) y = f == q && length args == n && match (proj x args) y
+        match (TApp (TDef _ f) args) y = f == q && length args == n && match (proj x args) y
         match _                    _ = False
 
 data IdentityIn = IdIn [Int]
@@ -82,7 +82,7 @@ trivialIdentity q t =
                | otherwise -> notId
         TLet _ b           -> go (k + 1) b
         TCase _ _ d bs     -> sconcat (go k d :| map (goAlt k) bs)
-        TApp (TDef f) args
+        TApp (TDef _ f) args
           | f == q         -> IdIn [ y | (TVar x, y) <- zip (reverse args) [0..], y + k == x ]
         TApp{}             -> notId
         TLam{}             -> notId
@@ -99,4 +99,3 @@ trivialIdentity q t =
     goAlt k (TALit _ b)   = go k b
     goAlt k (TAGuard _ b) = go k b
     goAlt k (TACon _ n b) = go (k + n) b
-

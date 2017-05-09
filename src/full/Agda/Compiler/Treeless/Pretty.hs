@@ -98,7 +98,11 @@ pTerm t = case t of
               <$> pTerm' 0 a
               <*> pTerm' 0 b
               <*> pTerm c
-  TDef f -> pure $ text (show f)
+  TDef var f -> text . shows f <$> case var of
+    TDefDefault -> return ""
+    TDefAbstractPLet is -> do
+      vs <- mapM name is
+      return $ ".dv[ " ++ unwords (vs ++ ["]"])
   TCon c -> pure $ text (show c)
   TLit l -> pure $ pretty l
   TPrim op | isJust (isInfix op) -> pure $ text ("_" ++ opName op ++ "_")
@@ -151,4 +155,3 @@ pTerm t = case t of
   TSort -> pure $ text "Set"
   TErased -> pure $ text "_"
   TError err -> paren 9 $ pure $ text "error" <+> text (show (show err))
-
