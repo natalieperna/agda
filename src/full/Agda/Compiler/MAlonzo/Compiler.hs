@@ -107,7 +107,7 @@ ghcBackend' = Backend'
 
 --- Options ---
 
-data GHCOptions = GHCOptions
+data GHCOptions = GHCOptions -- updates need to go also into .hs-boot!
   { optGhcCompile :: Bool
   , optGhcCallGhc :: Bool
   , optGhcFlags   :: [String]
@@ -180,7 +180,7 @@ ghcPostModule _ _ _ _ defs = do
   hasMainFunction <$> curIF
 
 ghcCompileDef :: GHCOptions -> GHCModuleEnv -> Definition -> TCM [HS.Decl]
-ghcCompileDef o = definition (optGhcGeneratePatternLet o)
+ghcCompileDef = definition
 
 -- Compilation ------------------------------------------------------------
 
@@ -231,7 +231,7 @@ imports = (hsImps ++) <$> imps where
 --   flat x = x
 -- @
 
-definition :: Bool -> Maybe CoinductionKit -> Definition -> TCM [HS.Decl]
+definition :: GHCOptions -> Maybe CoinductionKit -> Definition -> TCM [HS.Decl]
 -- ignore irrelevant definitions
 {- Andreas, 2012-10-02: Invariant no longer holds
 definition _ kit (Defn Forced{}  _ _  _ _ _ _ _ _) = __IMPOSSIBLE__
@@ -242,7 +242,7 @@ definition _ kit Defn{defArgInfo = info, defName = q} | isIrrelevant info = do
   reportSDoc "compile.ghc.definition" 10 $
     text "Not compiling" <+> prettyTCM q <> text "."
   return []
-definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
+definition ghcOpts kit Defn{defName = q, defType = ty, theDef = d} = do
   reportSDoc "compile.ghc.definition" 10 $ vcat
     [ text "Compiling" <+> prettyTCM q <> text ":"
     , nest 2 $ text (show d)
@@ -352,8 +352,8 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
     used <- getCompiledArgUse q
     let dostrip = any not used
 
-    e <- if dostrip then closedTerm genPLet (stripUnusedArguments used treeless)
-                    else closedTerm genPLet treeless
+    e <- if dostrip then closedTerm ghcOpts (stripUnusedArguments used treeless)
+                    else closedTerm ghcOpts treeless
     let (ps, b) = lamView e
         lamView :: HS.Exp -> ([HS.Pat], HS.Exp)
         lamView e =
@@ -369,7 +369,7 @@ definition genPLet kit Defn{defName = q, defType = ty, theDef = d} = do
         funbind f ps b = HS.FunBind [HS.Match f ps (HS.UnGuardedRhs b) emptyBinds]
 
     -- The definition of the non-stripped function
-    (ps0, _) <- lamView <$> closedTerm genPLet (foldr ($) T.TErased $ replicate (length used) T.TLam)
+    (ps0, _) <- lamView <$> closedTerm ghcOpts (foldr ($) T.TErased $ replicate (length used) T.TLam)
     let b0 = foldl HS.App (hsVarUQ $ duname q) [ hsVarUQ x | (~(HS.PVar x), True) <- zip ps0 used ]
 
     mCCF <- getCrossCallFloat q
@@ -474,11 +474,11 @@ mapContext :: (CCContext -> CCContext) -> CCEnv -> CCEnv
 mapContext f e = e { ccCxt = f (ccCxt e) }
 
 -- | Initial environment for expression generation.
-initCCEnv :: Bool -> CCEnv
-initCCEnv genPLet = CCEnv
+initCCEnv :: GHCOptions -> CCEnv
+initCCEnv ghcOpts = CCEnv
   { ccNameSupply = map (ihname "v") [0..]  -- DON'T CHANGE THESE NAMES!
   , ccCxt        = []
-  , ccGenPLet    = genPLet
+  , ccGenPLet    = optGhcGeneratePatternLet ghcOpts
   }
 
 -- | Term variables are de Bruijn indices.
@@ -524,8 +524,8 @@ checkCover q ty n cs hsCons = do
                                 (HS.UnGuardedRhs rhs) emptyBinds]
          ]
 
-closedTerm :: Bool -> T.TTerm -> TCM HS.Exp
-closedTerm genPLet v = hsCast <$> term v `runReaderT` initCCEnv genPLet
+closedTerm :: GHCOptions -> T.TTerm -> TCM HS.Exp
+closedTerm ghcOpts v = hsCast <$> term v `runReaderT` initCCEnv ghcOpts
 
 -- | In @addAsPats xs numBound tp pat@, recurse through @tp@ to find all
 --   single constructor @TCase@s and replace @PVar@s of the same scrutinee

@@ -10,7 +10,7 @@ import qualified Agda.Utils.Haskell.Syntax as HS
 
 import Agda.Compiler.Common
 import Agda.Compiler.ToTreeless
-import {-# SOURCE #-} Agda.Compiler.MAlonzo.Compiler (closedTerm)
+import {-# SOURCE #-} Agda.Compiler.MAlonzo.Compiler (closedTerm, defaultGHCOptions)
 import Agda.Compiler.MAlonzo.Misc
 import Agda.Compiler.MAlonzo.Pretty
 import Agda.Syntax.Common
@@ -212,7 +212,7 @@ primBody s = maybe unimplemented (either (hsVarUQ . HS.Ident) id <$>) $
   -- Trust me
   , ("primTrustMe"       , Right <$> do
        refl <- primRefl
-       closedTerm False =<< (closedTermToTreeless $ lam "a" (lam "A" (lam "x" (lam "y" refl)))))
+       closedTerm defaultGHCOptions =<< (closedTermToTreeless $ lam "a" (lam "A" (lam "x" (lam "y" refl)))))
   ]
   where
   x |-> s = (x, Left <$> s)
