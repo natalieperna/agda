@@ -5,12 +5,7 @@ import qualified Agda.Utils.Haskell.Syntax as HS
 import Agda.Syntax.Treeless (TTerm)
 import Agda.TypeChecking.Monad (TCM)
 
-data GHCOptions = GHCOptions
-  { optGhcCompile :: Bool
-  , optGhcCallGhc :: Bool
-  , optGhcFlags   :: [String]
-  , optGhcGeneratePatternLet :: Bool
-  }
+data GHCOptions
 
 defaultGHCOptions :: GHCOptions
 
