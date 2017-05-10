@@ -35,7 +35,7 @@ import Agda.Compiler.Treeless.AsPatterns
 import Agda.Compiler.Treeless.Identity
 import Agda.Compiler.Treeless.CaseSquash
 import Agda.Compiler.Treeless.SplitPLet (extractCrossCallFloat)
-import Agda.Compiler.Treeless.FloatPLetNV
+-- import Agda.Compiler.Treeless.FloatPLetNV
 
 import Agda.Syntax.Common
 import Agda.TypeChecking.Monad as TCM
@@ -116,12 +116,14 @@ ccToTreeless q cc = do
       return body'
     else return body
   doFloatPLet <- optFloatPLet <$> commandLineOptions
+{-
   body <- if doFloatPLet
     then let body' = floatPLet body
       in do
       reportSDoc "treeless.opt.floatplet" (30 + v) $ text "-- after PLet floating"  $$ pbody body'
       return body'
     else return body
+-}
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $

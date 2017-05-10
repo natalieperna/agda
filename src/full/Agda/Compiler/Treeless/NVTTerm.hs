@@ -37,6 +37,8 @@ import Agda.Utils.Impossible
 newtype Var = V {unV :: Int} deriving (Eq, Ord, Show)
 
 newtype VarSet = VarSet IntSet
+instance Show VarSet where showsPrec p (VarSet s) = showsPrec p s
+
 emptyVarSet :: VarSet
 emptyVarSet = VarSet IntSet.empty
 singletonVarSet :: Var -> VarSet
@@ -47,6 +49,12 @@ deleteVarSet :: Var -> VarSet -> VarSet
 deleteVarSet (V i) (VarSet s) = VarSet $ IntSet.delete  i s
 elemVarSet :: Var -> VarSet -> Bool
 elemVarSet (V i) (VarSet s) = IntSet.member i s
+listToVarSet :: [Var] -> VarSet
+listToVarSet = foldr insertVarSet emptyVarSet
+unionVarSet :: VarSet -> VarSet -> VarSet
+unionVarSet (VarSet s1) (VarSet s2) = VarSet $ IntSet.union s1 s2
+unionsVarSet :: [VarSet] -> VarSet
+unionsVarSet = foldr unionVarSet emptyVarSet
 
 data NVTTerm
   = NVTVar Var
@@ -214,28 +222,28 @@ toTAlt vs (NVTAGuard g b) = TAGuard (toTTerm vs g) (toTTerm vs b)
 toTAlt vs (NVTALit lit b) = TALit lit (toTTerm vs b)
 
 
-fvarsNVTTerm :: NVTTerm -> IntSet
-fvarsNVTTerm (NVTVar (V i)) = IntSet.singleton i
-fvarsNVTTerm (NVTPrim p) = IntSet.empty
-fvarsNVTTerm (NVTDef NVTDefDefault name) = IntSet.empty
-fvarsNVTTerm (NVTDef (NVTDefAbstractPLet vs) name) = IntSet.fromList $ map unV vs
-fvarsNVTTerm (NVTApp f ts) = IntSet.unions $ fvarsNVTTerm f : map fvarsNVTTerm ts
-fvarsNVTTerm (NVTLam (V i) b) = IntSet.delete i $ fvarsNVTTerm b
-fvarsNVTTerm (NVTLit lit) = IntSet.empty
-fvarsNVTTerm (NVTCon c) = IntSet.empty
-fvarsNVTTerm (NVTLet (V i) e b) = fvarsNVTTerm e `IntSet.union` IntSet.delete i (fvarsNVTTerm b)
-fvarsNVTTerm (NVTCase (V i) caseType dft alts) = IntSet.unions $ IntSet.insert i (fvarsNVTTerm dft) : map fvarsNVTAlt alts
-fvarsNVTTerm NVTUnit = IntSet.empty
-fvarsNVTTerm NVTSort = IntSet.empty
-fvarsNVTTerm NVTErased = IntSet.empty
-fvarsNVTTerm (NVTError t) = IntSet.empty
+fvarsNVTTerm :: NVTTerm -> VarSet
+fvarsNVTTerm (NVTVar v) = singletonVarSet v
+fvarsNVTTerm (NVTPrim p) = emptyVarSet
+fvarsNVTTerm (NVTDef NVTDefDefault name) = emptyVarSet
+fvarsNVTTerm (NVTDef (NVTDefAbstractPLet vs) name) = listToVarSet vs
+fvarsNVTTerm (NVTApp f ts) = unionsVarSet $ fvarsNVTTerm f : map fvarsNVTTerm ts
+fvarsNVTTerm (NVTLam v b) = deleteVarSet v $ fvarsNVTTerm b
+fvarsNVTTerm (NVTLit lit) = emptyVarSet
+fvarsNVTTerm (NVTCon c) = emptyVarSet
+fvarsNVTTerm (NVTLet v e b) = fvarsNVTTerm e `unionVarSet` deleteVarSet v (fvarsNVTTerm b)
+fvarsNVTTerm (NVTCase v caseType dft alts) = unionsVarSet $ insertVarSet v (fvarsNVTTerm dft) : map fvarsNVTAlt alts
+fvarsNVTTerm NVTUnit = emptyVarSet
+fvarsNVTTerm NVTSort = emptyVarSet
+fvarsNVTTerm NVTErased = emptyVarSet
+fvarsNVTTerm (NVTError t) = emptyVarSet
 
-fvarsNVTAlt :: NVTAlt -> IntSet
-fvarsNVTAlt (NVTACon c cvars b) = foldr (IntSet.delete . unV) (fvarsNVTTerm b) cvars
-fvarsNVTAlt (NVTAGuard g b) = fvarsNVTTerm g `IntSet.union` fvarsNVTTerm b
+fvarsNVTAlt :: NVTAlt -> VarSet
+fvarsNVTAlt (NVTACon c cvars b) = foldr deleteVarSet (fvarsNVTTerm b) cvars
+fvarsNVTAlt (NVTAGuard g b) = fvarsNVTTerm g `unionVarSet` fvarsNVTTerm b
 fvarsNVTAlt (NVTALit lit b) = fvarsNVTTerm b
 
-
+{-
 bvarsNVTTerm :: NVTTerm -> IntSet
 bvarsNVTTerm (NVTVar v) = IntSet.empty
 bvarsNVTTerm (NVTPrim p) = IntSet.empty
@@ -256,6 +264,7 @@ bvarsNVTAlt (NVTACon name cvars b) = let bvars = IntSet.fromList (map unV cvars)
   in IntSet.union (bvarsNVTTerm b) bvars
 bvarsNVTAlt (NVTAGuard g b) = bvarsNVTTerm g `IntSet.union` bvarsNVTTerm b
 bvarsNVTAlt (NVTALit lit b) = bvarsNVTTerm b
+-}
 
 newtype NVRename = NVRename (IntMap Var)
 
@@ -334,10 +343,12 @@ renameNVTTerm r@(NVRename m) t
     renameNVTAlt r (NVTALit lit b) = NVTALit lit (renTTerm r b)
 
 data NVConPat = NVConPat CaseType NVTTerm QName [NVPat]
+  deriving (Show)
 
 data NVPat
   = NVPVar Var
   | NVPAsCon Var NVConPat
+  deriving (Show)
 
 innerNVPat :: NVPat -> Maybe NVConPat
 innerNVPat (NVPVar _) = Nothing
