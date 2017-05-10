@@ -527,6 +527,10 @@ checkCover q ty n cs hsCons = do
 closedTerm :: GHCOptions -> T.TTerm -> TCM HS.Exp
 closedTerm ghcOpts v = hsCast <$> term v `runReaderT` initCCEnv ghcOpts
 
+-- For export to MAlonzo.Primitives via MAlonzo/Compiler.hs-boot
+closedTerm' :: T.TTerm -> TCM HS.Exp
+closedTerm' = closedTerm defaultGHCOptions
+
 -- | In @addAsPats xs numBound tp pat@, recurse through @tp@ to find all
 --   single constructor @TCase@s and replace @PVar@s of the same scrutinee
 --   with appropriate @PAsPat@s, until @TErased@ is reached.
