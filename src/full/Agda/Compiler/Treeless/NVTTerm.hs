@@ -7,9 +7,10 @@ import Control.Applicative
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.Reader
 import Control.Monad.State
+import Data.List (elemIndex)
+import Data.Maybe (mapMaybe)
 import Data.Monoid
 import qualified Data.Map as Map
-import Data.List (elemIndex)
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Data.IntMap (IntMap)
@@ -34,6 +35,18 @@ import Agda.Utils.Impossible
 #include "undefined.h"
 
 newtype Var = V {unV :: Int} deriving (Eq, Ord, Show)
+
+newtype VarSet = VarSet IntSet
+emptyVarSet :: VarSet
+emptyVarSet = VarSet IntSet.empty
+singletonVarSet :: Var -> VarSet
+singletonVarSet (V i) = VarSet $ IntSet.singleton i
+insertVarSet :: Var -> VarSet -> VarSet
+insertVarSet (V i) (VarSet s) = VarSet $ IntSet.insert i s
+deleteVarSet :: Var -> VarSet -> VarSet
+deleteVarSet (V i) (VarSet s) = VarSet $ IntSet.delete  i s
+elemVarSet :: Var -> VarSet -> Bool
+elemVarSet (V i) (VarSet s) = IntSet.member i s
 
 data NVTTerm
   = NVTVar Var
@@ -124,6 +137,13 @@ getVar = do
 
 getVars :: Monad m => Int -> U m [Var]
 getVars k = sequence $ replicate k getVar
+
+-- @map fst <$> getRenaming vs = return vs@
+getRenaming :: Monad m => [Var] -> U m [(Var, Var)]
+getRenaming [] = return []
+getRenaming (u : us) = do
+  v <- getVar
+  ((u,v) :) <$> getRenaming us
 
 fromTTerm :: Monad m => [Var] -> TTerm -> U m NVTTerm
 fromTTerm vs (TVar k) = return $ NVTVar (vs !! k)
@@ -253,6 +273,12 @@ insertNVRename (V i) v@(V j) r@(NVRename m)
 zipInsertNVRename :: [Var] -> [Var] -> NVRename -> NVRename
 zipInsertNVRename us vs r = foldr ($) r $ zipWith insertNVRename us vs
 
+listInsertNVRename :: [(Var,Var)] -> NVRename -> NVRename
+listInsertNVRename ps r = foldr (uncurry insertNVRename) r ps
+
+listToNVRename :: [(Var,Var)] -> NVRename
+listToNVRename ps = listInsertNVRename ps emptyNVRename
+
 zipNVRename :: [Var] -> [Var] -> NVRename
 zipNVRename us vs = zipInsertNVRename us vs emptyNVRename
 
@@ -313,18 +339,61 @@ data NVPat
   = NVPVar Var
   | NVPAsCon Var NVConPat
 
+innerNVPat :: NVPat -> Maybe NVConPat
+innerNVPat (NVPVar _) = Nothing
+innerNVPat (NVPAsCon _v p) = Just p
+
+withInnerNVPats :: [NVPat] -> [(Var, NVConPat)]
+withInnerNVPats [] = []
+withInnerNVPats (NVPVar _ : ps) = withInnerNVPats ps
+withInnerNVPats (NVPAsCon v conPat : ps) = (v, conPat) : withInnerNVPats ps
+
 getNVPatVar :: NVPat -> Var
 getNVPatVar (NVPVar v) = v
 getNVPatVar (NVPAsCon v _) = v
 
--- @caseNVPat v p b@ is @case v of p -> b@
+-- taking care that |innerNVPatVars| generates the sequence of variables
+-- that will be the sequence of bound variabe in the result of |caseNVPat|.
+innerNVPatVars :: NVPat -> [Var]
+innerNVPatVars (NVPVar _v) =[]
+innerNVPatVars (NVPAsCon _v (NVConPat _ct _dft _c pats))
+  = map getNVPatVar pats ++ concatMap innerNVPatVars pats
+
+patVars :: NVPat -> [Var]
+patVars p = getNVPatVar p : innerNVPatVars p
+
+-- @caseNVPat v p b@ is @case v of p -> b@ inside the body of @let a@p = ...@
+-- \edcomm{WK}{Used?}
 caseNVPat :: Var -> NVPat -> NVTTerm -> NVTTerm
 caseNVPat a@(V i) (NVPVar v@(V j)) b
    | i == j     = b
    | otherwise  = renameNVTTerm (singletonNVRename v a) b
-caseNVPat a (NVPAsCon v (NVConPat ct dft c pats)) b = NVTCase a ct dft
-   [NVTACon c (map getNVPatVar pats) $ foldr (\ p -> caseNVPat (getNVPatVar p) p) b pats]
+caseNVPat a (NVPAsCon _v conPat) b = caseNVConPat a conPat b
 
+-- @caseNVConPat v p b@ is @case v of p -> b@
+caseNVConPat :: Var -> NVConPat -> NVTTerm -> NVTTerm
+caseNVConPat a (NVConPat ct dft c pats) b = NVTCase a ct dft
+   [NVTACon c (map getNVPatVar pats) $ foldr (\ (v, p) -> caseNVConPat v p) b $ withInnerNVPats pats]
+
+
+-- Monadic versions: These rename the case scrutinees according to the incoming
+-- NVRename, and create new bound variables, propagating the renaming of those
+-- through inner patterns, but do not touch the body argument |b|.
+
+-- \edcomm{WK}{Used?}
+caseNVPatU :: Monad m => NVRename -> Var -> NVPat -> NVTTerm -> U m NVTTerm
+caseNVPatU r a@(V i) (NVPVar v@(V j)) b
+   | i == j     = return b
+   | otherwise  = return $ renameNVTTerm (insertNVRename v (renameVar r a) r) b
+caseNVPatU r a (NVPAsCon _v conPat) b = caseNVConPatU r (renameVar r a) conPat b
+
+caseNVConPatU :: Monad m => NVRename -> Var -> NVConPat -> NVTTerm -> U m NVTTerm
+caseNVConPatU r a (NVConPat ct dft c pats) b = NVTCase (renameVar r a) ct dft . (: []) <$> do
+    vps <- getRenaming $ map getNVPatVar pats
+    let  cvars = map snd vps
+         r' = listInsertNVRename vps r -- does not need to propagate across siblings.
+    b' <- foldM (\ t (v, p) -> caseNVConPatU r' v p t) b $ withInnerNVPats pats
+    return $ NVTACon c cvars b'
 
 -- pattern unifiers:
 type PU = (NVRename, NVRename)
@@ -350,13 +419,47 @@ unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2))
                                else Nothing
     Nothing -> case p2 of
       NVPVar _v2 -> Just (p1, (r1, insertNVRename v2 v1 r2))
-      NVPAsCon _v2 (NVConPat ct2 dft2 c2 ps2) -> case p1 of
+      NVPAsCon _v2 cp2 -> case p1 of
         NVPVar _v1 -> Just (p2, (insertNVRename v1 v2 r1, r2))
-        NVPAsCon _v1 (NVConPat ct1 dft1 c1 ps1) -> if c1 /= c2
-          then Nothing
-          else case unifyNVPats ps1 ps2 pu of
-            Nothing -> Nothing
-            Just (ps', pu') ->Just (NVPAsCon v1 (NVConPat ct1 dft1 c1 ps'), pu')
+        NVPAsCon _v1 cp1 -> case unifyNVConPat0 cp1 cp2 pu of
+          Nothing -> Nothing
+          Just (cp', pu') -> Just (NVPAsCon v1 cp', pu')
+
+unifyNVConPat :: NVConPat -> NVConPat -> Maybe (NVConPat, PU)
+unifyNVConPat cp1 cp2 = unifyNVConPat0 cp1 cp2 (emptyNVRename, emptyNVRename)
+
+unifyNVConPat' :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
+unifyNVConPat' (cv1, cp1) (cv2, cp2) = if cv1 /= cv2 then Nothing else unifyNVConPat cp1 cp2
+
+deepUnifyNVConPat1in2 :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
+deepUnifyNVConPat1in2 p1@(cv1, cp1) p2@(cv2, cp2@(NVConPat ct2 dft2 c2 ps2))
+  = case unifyNVConPat' p1 p2 of
+  Nothing -> h ps2
+      where
+        h :: [NVPat] -> Maybe (NVConPat, PU)
+        h [] = Nothing
+        h (pat : pats)  | NVPAsCon vi cpi <- pat
+                        , Just (cp', pu) <- deepUnifyNVConPat1in2 p1 (vi, cpi)
+                        = do
+                           cp'' <- attachToNVConPat vi cp' cp2 -- inefficient, could attach to |pat|
+                           Just (cp'', pu)
+                                   -- \edcomm{WK}{And |pu| is now wrong. For the time being, |pu| is unused...}
+                        | otherwise
+                        = h pats
+  x -> x
+
+deepUnifyNVConPat :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
+deepUnifyNVConPat p1 p2 = deepUnifyNVConPat1in2 p1 p2 `mplus` deepUnifyNVConPat1in2 p2 p1
+
+
+unifyNVConPat0 :: NVConPat -> NVConPat -> PU -> Maybe (NVConPat, PU)
+unifyNVConPat0 (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2)
+               pu@(r1@(NVRename m1), r2@(NVRename m2))
+  = if c1 /= c2
+    then Nothing
+    else case unifyNVPats ps1 ps2 pu of
+      Nothing -> Nothing
+      Just (ps', pu') ->Just (NVConPat ct1 dft1 c1 ps', pu')
 
 unifyNVPats :: [NVPat] -> [NVPat] -> PU -> Maybe ([NVPat], PU)
 unifyNVPats [] [] pu = Just ([], pu)
@@ -366,11 +469,18 @@ unifyNVPats (p1 : ps1) (p2 : ps2) pu = do
   Just (p' : ps', pu'')
 unifyNVPats _ _ _ = Nothing
 
+-- attaching to an inner variable is accepted if the corresponding subpatterns unify.
 attachNVConPat :: Var -> NVConPat -> NVPat -> Maybe NVPat
 attachNVConPat v cp (NVPVar v') = if v == v' then Just (NVPAsCon v' cp) else Nothing
-attachNVConPat v cp (NVPAsCon v' cp'@(NVConPat ct dft c ps))
-  | v == v'    = Nothing
-  | otherwise  = NVPAsCon v' . NVConPat ct dft c <$> h ps
+attachNVConPat v cp (NVPAsCon v' cp')
+  | v == v'    = case unifyNVConPat cp cp' of
+    Nothing -> Nothing
+    Just (cp'', _pu) -> Just $ NVPAsCon v' cp''
+  | otherwise  = NVPAsCon v' <$> attachToNVConPat v cp cp'
+
+attachToNVConPat :: Var -> NVConPat -> NVConPat -> Maybe NVConPat
+attachToNVConPat v cp (NVConPat ct dft c ps)
+  =NVConPat ct dft c <$> h ps
     where
       h :: [NVPat] -> Maybe [NVPat]
       h [] = Just []
@@ -396,6 +506,29 @@ matchNVPat0 p1 p2 r@(NVRename m)
       NVPAsCon _v2 (NVConPat ct2 dft2 c2 ps2) -> if c1 /= c2
         then Nothing
         else matchNVPats ps1 ps2 r
+
+matchNVConPat :: NVConPat -> NVConPat -> Maybe NVRename
+matchNVConPat  p1 p2 = matchNVConPat0 p1 p2 emptyNVRename
+
+matchNVConPat0 :: NVConPat -> NVConPat -> NVRename -> Maybe NVRename
+matchNVConPat0 (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2) r@(NVRename m)
+  = if c1 /= c2
+    then Nothing
+    else matchNVPats ps1 ps2 r
+
+-- Spec: @deepMatchNVConPat cp cp' = Just r@
+-- iff @r@ is the least renaming such that @renameNVConpat r cp@ occurs in @cp'@.
+deepMatchNVConPat :: NVConPat -> NVConPat -> Maybe NVRename
+deepMatchNVConPat cp cp'@(NVConPat ct2 dft2 c2 ps2)
+  = case matchNVConPat cp cp' of
+      Just r ->Just  r
+      Nothing -> h $ withInnerNVPats ps2
+        where
+          h :: [(Var, NVConPat)] -> Maybe NVRename
+          h [] = Nothing
+          h ((_, cpi) : ps) = case deepMatchNVConPat cp cpi of
+            Nothing -> h ps
+            x -> x
 
 matchNVPats :: [NVPat] -> [NVPat] -> NVRename -> Maybe NVRename
 matchNVPats [] [] r = Just r
