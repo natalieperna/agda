@@ -107,7 +107,7 @@ ghcBackend' = Backend'
 
 --- Options ---
 
-data GHCOptions = GHCOptions -- updates need to go also into .hs-boot!
+data GHCOptions = GHCOptions
   { optGhcCompile :: Bool
   , optGhcCallGhc :: Bool
   , optGhcFlags   :: [String]
