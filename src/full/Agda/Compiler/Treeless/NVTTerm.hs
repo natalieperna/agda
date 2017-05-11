@@ -367,7 +367,10 @@ getNVPatVar (NVPAsCon v _) = v
 -- that will be the sequence of bound variabe in the result of |caseNVPat|.
 innerNVPatVars :: NVPat -> [Var]
 innerNVPatVars (NVPVar _v) =[]
-innerNVPatVars (NVPAsCon _v (NVConPat _ct _dft _c pats))
+innerNVPatVars (NVPAsCon _v cp) = boundNVConPatVars cp
+
+boundNVConPatVars :: NVConPat -> [Var]
+boundNVConPatVars (NVConPat _ct _dft _c pats)
   = map getNVPatVar pats ++ concatMap innerNVPatVars pats
 
 patVars :: NVPat -> [Var]
@@ -409,6 +412,10 @@ caseNVConPatU r a (NVConPat ct dft c pats) b = NVTCase (renameVar r a) ct dft . 
 -- pattern unifiers:
 type PU = (NVRename, NVRename)
 
+emptyPU :: PU
+emptyPU = (emptyNVRename, emptyNVRename)
+
+
 -- The result of @unifyNVPat@ contains the unified pattern,
 -- and the renamings for matching the argument patterns into that.
 --(Full substitutions are not necessary,
@@ -416,7 +423,7 @@ type PU = (NVRename, NVRename)
 --(Full substitutions are also not useful,
 --  since these renamings are intended for use on bodies via @renameNVTTerm@.)
 unifyNVPat :: NVPat -> NVPat -> Maybe (NVPat, PU)
-unifyNVPat p1 p2 = unifyNVPat0 p1 p2 (emptyNVRename, emptyNVRename)
+unifyNVPat p1 p2 = unifyNVPat0 p1 p2 emptyPU
 
 unifyNVPat0 :: NVPat -> NVPat -> PU -> Maybe (NVPat, PU)
 unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2))
@@ -437,7 +444,7 @@ unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2))
           Just (cp', pu') -> Just (NVPAsCon v1 cp', pu')
 
 unifyNVConPat :: NVConPat -> NVConPat -> Maybe (NVConPat, PU)
-unifyNVConPat cp1 cp2 = unifyNVConPat0 cp1 cp2 (emptyNVRename, emptyNVRename)
+unifyNVConPat cp1 cp2 = unifyNVConPat0 cp1 cp2 emptyPU
 
 unifyNVConPat' :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 unifyNVConPat' (cv1, cp1) (cv2, cp2) = if cv1 /= cv2 then Nothing else unifyNVConPat cp1 cp2

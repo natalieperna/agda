@@ -117,6 +117,7 @@ data CommandLineOptions = Options
   , optInlineProj       :: Bool
   , optSquashCases      :: Bool
   , optFloatPLet        :: Bool
+  , optCrossCallFloat   :: Bool
   , optAbstractPLet     :: Bool
   , optOnlyScopeChecking :: Bool
     -- ^ Should the top-level module only be scope-checked, and not
@@ -209,6 +210,7 @@ defaultOptions = Options
   , optInlineProj       = False
   , optSquashCases      = False
   , optFloatPLet        = False
+  , optCrossCallFloat   = False
   , optAbstractPLet     = False
   }
 
@@ -352,6 +354,9 @@ squashCasesFlag o = return $ o { optSquashCases = True }
 
 floatPLetFlag :: Flag CommandLineOptions
 floatPLetFlag o = return $ o { optFloatPLet = True }
+
+crossCallFloatFlag :: Flag CommandLineOptions
+crossCallFloatFlag o = return $ o { optCrossCallFloat = True }
 
 abstractPLetFlag :: Flag CommandLineOptions
 abstractPLetFlag o = return $ o { optAbstractPLet = True }
@@ -591,6 +596,8 @@ standardOptions =
                     "somehow prevent/prune duplicate constructors in cases"
     , Option []     ["float-plet"] (NoArg floatPLetFlag)
                     "float pattern lets to remove duplication"
+    , Option []     ["cross-call-float"] (NoArg crossCallFloatFlag)
+                    "float pattern bindings across function calls (requires --float-plet)"
     , Option []     ["abstract-plet"] (NoArg abstractPLetFlag)
                     "abstract pattern lets in generated code"
     ] ++ map (fmap lift) pragmaOptions

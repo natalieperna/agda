@@ -4,7 +4,9 @@ module Agda.Compiler.Treeless.FloatPatterns where
 import Prelude hiding (Floating)
 
 import Control.Applicative
+import Control.Arrow (second)
 import Control.Monad.Reader
+import Control.Monad.State
 import Data.Monoid
 import qualified Data.Map as Map
 import Data.Function (on)
@@ -16,7 +18,8 @@ import qualified Data.IntMap as IntMap
 import Data.IntMap (IntMap)
 
 import Agda.Syntax.Common
-import Agda.Syntax.Treeless as T hiding (PLet(..))
+import Agda.Syntax.Treeless hiding (PLet(..))
+import qualified Agda.Syntax.Treeless as T
 import Agda.Syntax.Literal
 import Agda.Syntax.Position
 import Agda.Syntax.Fixity
@@ -51,6 +54,11 @@ flFreeVars :: Floating -> VarSet
 flFreeVars plet@(FloatingPLet {}) = pletFVars plet
 flFreeVars (FloatingCase v _) = singletonVarSet v
 
+flBoundVars :: Floating -> [Var]
+flBoundVars (FloatingPLet {pletPat = p}) = patVars p
+flBoundVars (FloatingCase {fcasePat = cp}) = boundNVConPatVars cp
+
+
 attachConPatToFloating :: Var -> NVConPat -> Floating -> Maybe Floating
 attachConPatToFloating v conPat plet@(FloatingPLet {})
   = case attachNVConPat v conPat (pletPat plet) of
@@ -69,7 +77,6 @@ applyFloating plet@(FloatingPLet {pletPat = p}) b {- NVTLet v t1 b) a = -}
     v = getNVPatVar p
 applyFloating fcase@(FloatingCase v p) b = caseNVConPat v p b
 
-{-
 
 -- If |splitPLet t = Just (fl, t')|, then |applyFloating fl t' = t|.
 splitFloating :: NVTTerm -> Maybe (Floating, NVTTerm)
@@ -80,34 +87,35 @@ splitFloating (NVTLet v t1 t2) = case h (NVPVar v) t2 of
         , pletRHS = t1
         , pletFVars = fvarsNVTTerm t1
         }
-      , t')
+      , t'
+      )
    where
      h :: NVPat -> NVTTerm -> (NVPat, NVTTerm)
      h p t = case splitSingleAltCase t of
-       Nothing -> (p, t)
        Just (cv, conPat, b)
-         | Just p' <- attachNVConPat cv conPat p
+         | Just p' <-  attachNVConPat cv conPat p
+                       -- this fails if cv is not in p
          -> h p' b
+       _ -> (p, t)
 splitFloating t = case splitSingleAltCase t of
-       Nothing -> (p, t)
-       Just (cv, conPat, b) ->
+       Nothing -> Nothing
+       Just (cv, conPat, b) -> Just
          (FloatingCase
            { fcaseScrutinee = cv
            , fcasePat = conPat
            }
          , b
          )
+-- WK: Deeper |FloatingCase|s are not yet generated here.
+--     Merging into deeper |FloatingCase|s is currently
+--     also not done below (e.g. in joinFloatings)
 
--- |splitSingleAltCase vs t = Just ((v, conPat), t1)| means
--- that |caseNVConPat v conPat t1 == t|
--- and |vs'| contains |vs| and the additional pattern variables of |t0|
-splitSingleAltCase :: [Var] -> NVTTerm -> Maybe (Var, NVConPat, NVTTerm)
-splitSingleAltCase vs (NVTCase v ct dft [NVTACon c cvars t2]) | harmless dft
-  = let ((b', vs'), t') = let vs2 = vs ++ cvars in case splitBoundedCase vs2 t2 of
-          Nothing -> ((NVTErased, vs2), t2)
-          Just r -> r
-    in Just (v , NVConPat ct dft c cvars)
-splitSingleAltCase _ _ = Nothing
+-- |splitSingleAltCase t = Just (v, conPat, t1)| means
+-- that |caseNVConPat v conPat t1 == t|.
+splitSingleAltCase :: NVTTerm -> Maybe (Var, NVConPat, NVTTerm)
+splitSingleAltCase (NVTCase v ct dft [NVTACon c cvars t2]) | harmless dft
+  = Just (v, NVConPat ct dft c $ map NVPVar cvars, t2)
+splitSingleAltCase _ = Nothing
 
 -- | ``harmless'' in the sense of negligible as default expression in |TCase|:
 harmless :: NVTTerm -> Bool
@@ -119,8 +127,9 @@ harmless _             = False
 
 -- |  @floatPLet@ floats pattern lets occuring in multiple branches
 --    to the least join point of those branches.
-floatPatterns :: TTerm -> TTerm
-floatPatterns = toTTerm' . floatNVPatterns . fromTTerm'
+floatPatterns :: Bool -> TTerm -> TCM TTerm
+floatPatterns doCrossCallFloat t = toTTerm' <$>
+  floatNVPatterns doCrossCallFloat (fromTTerm' t)
 -- -- For all the details:
 --  floatPatterns t = let
 --    nvt = fromTTerm' t
@@ -129,8 +138,10 @@ floatPatterns = toTTerm' . floatNVPatterns . fromTTerm'
 --    in trace (unlines
 --     ["floatPatterns", "    " ++ show nvt, "\n    " ++ show nvt']) t'
 
-floatNVPatterns :: NVTTerm -> TCM NVTTerm
-floatNVPatterns t = execStateT (snd <$> floatPatterns0 t) 0 -- squashPLet [] . snd . floatPatterns0
+floatNVPatterns :: Bool -> NVTTerm -> TCM NVTTerm
+floatNVPatterns doCrossCallFloat t
+  = evalStateT (snd <$> floatPatterns0 doCrossCallFloat t) 0
+  -- squashPLet [] . snd . floatPatterns0
 
 -- [Floating] only contains maximal elements after unification of patterns
 
@@ -150,15 +161,16 @@ findFloating fl [] = Just (fl, [])
 findFloating plet@(FloatingPLet {pletPat = pat, pletRHS = t}) (fl : fls)
    | FloatingPLet {pletPat = pat', pletRHS = t'} <- fl
    , t == t'
-   , Just (pat'', _pu) <- unifyNVPat0 pat pat'
+   , Just (pat'', _pu) <- unifyNVPat pat pat'
    = Just (fl { pletPat = pat''}, fls)
    | otherwise
-   = first (fl :) <$> findFloating plet fls
+   = second (fl :) <$> findFloating plet fls
 findFloating fcase@(FloatingCase cv cpat) (fl : fls)
   | FloatingCase cv' cpat' <- fl
   , Just (cpat'', _pu) <- deepUnifyNVConPat (cv, cpat) (cv', cpat')
-  = Just (FloatingCase cv' cpat'')
-  | otherwise = first (fl :) <$> findFloating fcase fls
+  = Just (FloatingCase cv' cpat'', fls)
+  | otherwise
+  = second (fl :) <$> findFloating fcase fls
 
 -- If @insertFloating fl fls = (mfl, fls')@,
 -- then @fls'@ is the result either of adding @fl@ to @fls@,
@@ -179,40 +191,67 @@ joinFloatingss (ps : pss) = case joinFloatingss pss of
   (psC, psR) -> case joinFloatings ps psR of
     (psC', psR') -> (snd (joinFloatings psC' psC), psR')
 
+floatingsFromPLets :: [Var] -> [T.PLet] -> U TCM [Floating]
+floatingsFromPLets vs [] = return []
+floatingsFromPLets vs (plet : plets) = do
+  p' <- fromTTerm vs $ T.eTerm plet
+  let Just (fl, NVTErased) = splitFloating p'
+  let vs' = reverse (flBoundVars fl) ++ vs
+  fls <- floatingsFromPLets vs' plets
+  return $ fl : fls
+
 -- | @floatPatterns0@ duplicates PLet occurrences at join points.
-floatPatterns0 :: NVTTerm -> U TCM ([Floating], NVTTerm)
-floatPatterns0 t = case splitFloating t of
-  Just (fl, t') -> case floatPatterns0 t' of
-    (fls, t'') -> case insertFloating fl fls of
+floatPatterns0 :: Bool -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns0 doCrossCallFloat t = case splitFloating t of
+  Just (fl, t') -> do
+    (fls, t'') <- floatPatterns0 doCrossCallFloat t'
+    case insertFloating fl fls of
       (_, fls') -> return (fls', applyFloating fl t'')
   Nothing -> case t of
     NVTVar _ -> return ([], t)
     NVTPrim _ -> return ([], t)
-    NVTDef NVTDefDefault name -> undefined -- ([], t) -- \edcom{WK}{Look up, convert, and float |ccfPLets|!!}
+    NVTDef NVTDefDefault name -> if not doCrossCallFloat
+      then return ([], t)
+      else do
+      mccf <- lift $ getCrossCallFloat name
+      case mccf of
+        Nothing -> return ([], t)
+        Just ccf -> do
+          vVars <- reverse <$> getVars (ccfLambdaLen ccf)
+          fls <- floatingsFromPLets vVars $ ccfPLets ccf
+          let dvcall = NVTDef (NVTDefAbstractPLet vVars) name
+          return (fls, dvcall) -- \unfinished
+            -- WK: because |fls| are not arising from real duplication,
+            --     the |vVars| may get lost in |joinFloatings| etc.!
+            -- WK: The reversing of the list, if kept,
+            --     needs to be documented in Syntax,Treeless!
+            -- \unfinished
+
     NVTDef (NVTDefAbstractPLet _) _ -> return ([], t) -- unlikely to be encountered
     NVTApp tf tas -> do
-      (psf, tf') <- floatPatterns0 tf
-      (psas, tas') <- unzip <$> map floatPatterns0 tas
+      (psf, tf') <- floatPatterns0 doCrossCallFloat tf
+      (psas, tas') <- unzip <$> mapM (floatPatterns0 doCrossCallFloat) tas
       let (psC, psR) = joinFloatingss $ psf : psas
-      retun (psR, foldr applyFloating (NVTApp tf' tas') psC)
+      return (psR, foldr applyFloating (NVTApp tf' tas') psC)
     NVTLam v tb -> do
-      (ps, tb') <- floatPatterns0 tb
+      (ps, tb') <- floatPatterns0 doCrossCallFloat tb
       return (filter (not . (v `elemVarSet`) . flFreeVars) ps, NVTLam v tb')
     NVTLit _ -> return ([], t)
     NVTCon _ -> return ([], t)
     NVTLet v te tb -> do
-      (psb, tb') <- floatPatterns0 tb
+      (psb, tb') <- floatPatterns0 doCrossCallFloat tb
       let psb' = filter (not . (v `elemVarSet`) . flFreeVars) psb
-      (pse, te') <- floatPatterns0 te
+      (pse, te') <- floatPatterns0 doCrossCallFloat te
       case joinFloatings pse psb' of
           (ps, ps') -> return (ps', foldr applyFloating (NVTLet v te' tb') ps)
     NVTCase i ct dft alts -> do
-      (psdft, dft') <- floatPatterns0 dft
-      case unzip $ map h alts of
-        (pairs, alts') -> case unzip pairs of
-          (psCs, psRs) -> case joinFloatingss psRs of
-            (psC, psR) -> let psC' = nub $ concat (psCs ++ [psC]) -- \unfinished
-              in (psR, foldr applyFloating (NVTCase i ct dft' alts') psC')
+      (psdft, dft') <- floatPatterns0 doCrossCallFloat dft
+      (pairs, alts') <- unzip <$> mapM h alts
+      case unzip pairs of
+        (flsCs, flsRs) -> case joinFloatingss flsRs of
+          (flsC, flsR) -> case joinFloatingss (flsC : flsCs) of
+            (_, flsC') -> let tcore = NVTCase i ct dft' alts'
+              in return (flsR, foldr applyFloating tcore flsC')
     NVTUnit -> return ([], t)
     NVTSort -> return ([], t)
     NVTErased -> return ([], t)
@@ -221,14 +260,14 @@ floatPatterns0 t = case splitFloating t of
     -- |h| returns a pair like |joinFloatings|
     h :: NVTAlt -> U TCM (([Floating],[Floating]), NVTAlt)
     h (NVTACon name cvars b) = do
-      (psb, b') <- floatPatterns0 b
+      (psb, b') <- floatPatterns0 doCrossCallFloat b
       return (([], filter (\ p -> all (not . (`elemVarSet` flFreeVars p)) cvars) psb), NVTACon name cvars b')
     h (NVTAGuard g b) = do
-      (psg, g') <- floatPatterns0 g
-      (psb, b') <- floatPatterns0 b
+      (psg, g') <- floatPatterns0 doCrossCallFloat g
+      (psb, b') <- floatPatterns0 doCrossCallFloat b
       return (joinFloatings psg psb, NVTAGuard g' b')
     h (NVTALit lit b) = do
-      (psb, b') <- floatPatterns0 b
+      (psb, b') <- floatPatterns0 doCrossCallFloat b
       return (([], psb), NVTALit lit b')
 
 -- |squashPatterns| is to be called after |floatPatterns0|
@@ -261,6 +300,4 @@ squashPLet ps t = case splitPLet t of
     h (NVTACon name cvars b) = NVTACon name cvars $ squashPLet ps b
     h (NVTAGuard g b) = NVTAGuard (squashPLet ps g) (squashPLet ps b)
     h (NVTALit lit b) = NVTALit lit $ squashPLet ps b
--}
-
 -}
