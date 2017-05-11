@@ -40,7 +40,7 @@ prec :: Int -> P a -> P a
 prec p = local $ \ e -> e { pPrec = p }
 
 name :: Int -> P String
-name x = asks $ (!! x) . (++ map (("^" ++) . show) [1..]) . pBound
+name x = asks $ (!! x) . (++ map (('^' :) . show) [1..]) . pBound
 
 runP :: P a -> a
 runP p = runReader p PEnv{ pPrec = 0, pFresh = names, pBound = [] }
