@@ -23,6 +23,7 @@ import Agda.Utils.Impossible
 #include "undefined.h"
 
 
+
 -- The first argument to @applyPLet@ is a pattern-let prefix,
 -- that is, a TTerm prefix that can be translated into a pattern let binding,
 -- encoded as a TTerm delimited by TErase, see @data PLet@ in @Syntax.Treeless@.
@@ -88,6 +89,8 @@ splitPLets t = do
   let (plets, t'') = tPLetView t'
   Just (plet : plets, t'')
 
+
+-- WK: |extractCrossCallFloat| will be replaced by generation by floatPatterns!
 extractCrossCallFloat :: TTerm -> Maybe CrossCallFloat
 extractCrossCallFloat t = case tLamView t of
    (varNum, t') -> do

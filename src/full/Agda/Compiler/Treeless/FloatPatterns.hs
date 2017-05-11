@@ -58,6 +58,9 @@ flBoundVars :: Floating -> [Var]
 flBoundVars (FloatingPLet {pletPat = p}) = patVars p
 flBoundVars (FloatingCase {fcasePat = cp}) = boundNVConPatVars cp
 
+flRevBoundVars :: Floating -> [Var]
+flRevBoundVars = reverse . flBoundVars
+
 
 attachConPatToFloating :: Var -> NVConPat -> Floating -> Maybe Floating
 attachConPatToFloating v conPat plet@(FloatingPLet {})
@@ -140,7 +143,7 @@ floatPatterns doCrossCallFloat t = toTTerm' <$>
 
 floatNVPatterns :: Bool -> NVTTerm -> TCM NVTTerm
 floatNVPatterns doCrossCallFloat t
-  = evalStateT (snd <$> floatPatterns0 doCrossCallFloat t) 0
+  = evalStateT (snd <$> floatPatterns0 doCrossCallFloat [] t) 0
   -- squashPLet [] . snd . floatPatterns0
 
 -- [Floating] only contains maximal elements after unification of patterns
@@ -201,10 +204,14 @@ floatingsFromPLets vs (plet : plets) = do
   return $ fl : fls
 
 -- | @floatPatterns0@ duplicates PLet occurrences at join points.
-floatPatterns0 :: Bool -> NVTTerm -> U TCM ([Floating], NVTTerm)
-floatPatterns0 doCrossCallFloat t = case splitFloating t of
-  Just (fl, t') -> do
-    (fls, t'') <- floatPatterns0 doCrossCallFloat t'
+-- The @vs@ argument is an inside-out list of the binders in scope
+-- from the call stack, ignoring unmanifested duplication of |Floating|s.
+-- \edcomm{WK}{Should the |Floating|s be accompanied by the copy of |vs|
+-- used when generating them?
+floatPatterns0 :: Bool -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns0 doCrossCallFloat vs t = case splitFloating t of
+  Just (fl, t') -> let vs' = flRevBoundVars fl ++ vs in do
+    (fls, t'') <- floatPatterns0 doCrossCallFloat vs' t'
     case insertFloating fl fls of
       (_, fls') -> return (fls', applyFloating fl t'')
   Nothing -> case t of
@@ -229,24 +236,24 @@ floatPatterns0 doCrossCallFloat t = case splitFloating t of
 
     NVTDef (NVTDefAbstractPLet _) _ -> return ([], t) -- unlikely to be encountered
     NVTApp tf tas -> do
-      (psf, tf') <- floatPatterns0 doCrossCallFloat tf
-      (psas, tas') <- unzip <$> mapM (floatPatterns0 doCrossCallFloat) tas
+      (psf, tf') <- floatPatterns0 doCrossCallFloat vs tf
+      (psas, tas') <- unzip <$> mapM (floatPatterns0 doCrossCallFloat vs) tas
       let (psC, psR) = joinFloatingss $ psf : psas
       return (psR, foldr applyFloating (NVTApp tf' tas') psC)
     NVTLam v tb -> do
-      (ps, tb') <- floatPatterns0 doCrossCallFloat tb
+      (ps, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
       return (filter (not . (v `elemVarSet`) . flFreeVars) ps, NVTLam v tb')
     NVTLit _ -> return ([], t)
     NVTCon _ -> return ([], t)
     NVTLet v te tb -> do
-      (psb, tb') <- floatPatterns0 doCrossCallFloat tb
+      (psb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
       let psb' = filter (not . (v `elemVarSet`) . flFreeVars) psb
-      (pse, te') <- floatPatterns0 doCrossCallFloat te
+      (pse, te') <- floatPatterns0 doCrossCallFloat vs te
       case joinFloatings pse psb' of
           (ps, ps') -> return (ps', foldr applyFloating (NVTLet v te' tb') ps)
     NVTCase i ct dft alts -> do
-      (psdft, dft') <- floatPatterns0 doCrossCallFloat dft
-      (pairs, alts') <- unzip <$> mapM h alts
+      (psdft, dft') <- floatPatterns0 doCrossCallFloat vs dft
+      (pairs, alts') <- unzip <$> mapM (h vs) alts
       case unzip pairs of
         (flsCs, flsRs) -> case joinFloatingss flsRs of
           (flsC, flsR) -> case joinFloatingss (flsC : flsCs) of
@@ -258,16 +265,16 @@ floatPatterns0 doCrossCallFloat t = case splitFloating t of
     NVTError _ -> return ([], t)
   where
     -- |h| returns a pair like |joinFloatings|
-    h :: NVTAlt -> U TCM (([Floating],[Floating]), NVTAlt)
-    h (NVTACon name cvars b) = do
-      (psb, b') <- floatPatterns0 doCrossCallFloat b
+    h :: [Var] -> NVTAlt -> U TCM (([Floating],[Floating]), NVTAlt)
+    h vs (NVTACon name cvars b) = do
+      (psb, b') <- floatPatterns0 doCrossCallFloat (reverse cvars ++ vs) b
       return (([], filter (\ p -> all (not . (`elemVarSet` flFreeVars p)) cvars) psb), NVTACon name cvars b')
-    h (NVTAGuard g b) = do
-      (psg, g') <- floatPatterns0 doCrossCallFloat g
-      (psb, b') <- floatPatterns0 doCrossCallFloat b
+    h vs (NVTAGuard g b) = do
+      (psg, g') <- floatPatterns0 doCrossCallFloat vs g
+      (psb, b') <- floatPatterns0 doCrossCallFloat vs b
       return (joinFloatings psg psb, NVTAGuard g' b')
-    h (NVTALit lit b) = do
-      (psb, b') <- floatPatterns0 doCrossCallFloat b
+    h vs (NVTALit lit b) = do
+      (psb, b') <- floatPatterns0 doCrossCallFloat vs b
       return (([], psb), NVTALit lit b')
 
 -- |squashPatterns| is to be called after |floatPatterns0|

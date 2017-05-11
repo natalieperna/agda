@@ -364,7 +364,7 @@ getNVPatVar (NVPVar v) = v
 getNVPatVar (NVPAsCon v _) = v
 
 -- taking care that |innerNVPatVars| generates the sequence of variables
--- that will be the sequence of bound variabe in the result of |caseNVPat|.
+-- that will be the sequence of bound variables in the result of |caseNVPat|.
 innerNVPatVars :: NVPat -> [Var]
 innerNVPatVars (NVPVar _v) =[]
 innerNVPatVars (NVPAsCon _v cp) = boundNVConPatVars cp
@@ -375,6 +375,7 @@ boundNVConPatVars (NVConPat _ct _dft _c pats)
 
 patVars :: NVPat -> [Var]
 patVars p = getNVPatVar p : innerNVPatVars p
+
 
 -- @caseNVPat v p b@ is @case v of p -> b@ inside the body of @let a@p = ...@
 -- \edcomm{WK}{Used?}

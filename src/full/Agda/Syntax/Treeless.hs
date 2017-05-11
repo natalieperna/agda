@@ -211,6 +211,10 @@ data PLet = PLet
   , eTerm :: TTerm
   } deriving (Typeable, Show, Eq, Ord)
 
+data TFloating
+  = TFloatPLet PLet
+  | TFLoatCase TTerm
+
 -- For one field of @Compiled@, caching the factoring of |cTreeless|
 -- over @PLet@s that can be floated out
 data CrossCallFloat = CrossCallFloat
