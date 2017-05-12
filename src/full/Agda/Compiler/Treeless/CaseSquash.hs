@@ -55,7 +55,7 @@ dedupTerm env body = body
 caseReplacement :: (QName, [Int]) -> TTerm -> TTerm
 caseReplacement (name, args) tt@(TCase _ _ _ alts)
   | Just (TACon _ ar body) <- lookupTACon name alts
-  = varReplace [0..ar-1] (reverse args) body
+  = varReplace [ar-1,ar-2..0] args body
 caseReplacement _ tt = tt
 
 -- | Lookup 'TACon' in list of 'TAlt's by qualified name
@@ -87,6 +87,6 @@ shiftIndices f (n, cs) = (f n, map (shiftIndices' f) cs)
 -- | Substitute list of current de Bruijn indices for list of new indices
 --   in a term
 varReplace :: [Int] -> [Int] -> TTerm -> TTerm
-varReplace (from:froms) (to:tos) = subst from (TVar to) . varReplace froms tos
+varReplace (from:froms) (to:tos) = varReplace froms tos . subst from (TVar to)
 varReplace [] [] = id
 varReplace _ _ = __IMPOSSIBLE__
