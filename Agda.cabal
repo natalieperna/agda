@@ -217,6 +217,7 @@ library
                     Agda.Compiler.Treeless.Erase
                     Agda.Compiler.Treeless.SplitPLet
                     Agda.Compiler.Treeless.NVTTerm
+                    Agda.Compiler.Treeless.NVTTerm.Pretty
                     Agda.Compiler.Treeless.FloatPatterns
                     -- Agda.Compiler.Treeless.FloatPLetNV
                     Agda.Compiler.Treeless.GuardsToPrims

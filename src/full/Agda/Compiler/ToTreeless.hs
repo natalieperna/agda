@@ -107,7 +107,7 @@ ccToTreeless q cc = do
   body <- simplifyTTerm body
   reportSDoc "treeless.opt.simpl" (30 + v) $ text "-- after third simplification"  $$ pbody body
   body <- eraseTerms q body
-  reportSDoc "treeless.opt.erase" (30 + v) $ text "-- after second erasure"  $$ pbody body
+  reportSDoc "treeless.opt.erase" (30 + v) $ text (shows q " -- after second erasure") $$ pbody body
   doSquashCases <- optSquashCases <$> commandLineOptions
   body <- if doSquashCases
     then do
@@ -119,12 +119,14 @@ ccToTreeless q cc = do
   doCrossCallFloat <- optCrossCallFloat <$> commandLineOptions
   body <- if doFloatPLet
     then do
-      body' <- floatPatterns doCrossCallFloat body
-      reportSDoc "treeless.opt.floatplet" (30 + v) $ text "-- after PLet floating"  $$ pbody body'
+      body' <- floatPatterns doCrossCallFloat q body
+      reportSDoc "treeless.opt.floatplet" (30 + v)
+        $ text (shows q " -- after PLet floating") $$ pbody body'
       return body'
     else return body
   body <- simplifyTTerm body -- necessary for squashing after float
-  reportSDoc "treeless.opt.simpl" (30 + v) $ text "-- after fourth simplification"  $$ pbody body
+  reportSDoc "treeless.opt.simpl" (30 + v)
+    $ text (shows q " -- after fourth simplification") $$ pbody body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
@@ -138,13 +140,14 @@ ccToTreeless q cc = do
     then case extractCrossCallFloat body of
       Nothing ->         -- return ()
         reportSDoc "treeless.opt.abstractPLet" (40 + v) $
-          text "AbstractPLet: No PLet found:" <+> pbody body
+          text (shows q ": AbstractPLet: No PLet found:") <+> pbody body
       Just ccf -> do
         setCompiledCrossCallFloat q ccf
         reportSDoc "treeless.opt.abstractPLet" (30 + v) $
-          text ("-- ccfLambdaLen = " ++ show (C.ccfLambdaLen ccf))
-            <+> text (" length ccfPLets = " ++ show (length $ C.ccfPLets ccf))
-            $$ pbody' "[inside plets]" (C.ccfBody ccf)
+          text (shows q ": ccfLambdaLen = " ++ show (C.ccfLambdaLen ccf))
+          <+> text ("; length ccfPLets = " ++ show (length $ C.ccfPLets ccf))
+        reportSDoc "treeless.opt.abstractPLet" (40 + v) $
+          vcat (map (text . ("**  " ++) . show) (C.ccfPLets ccf)                      ++ [pbody' "* [inside plets]" (C.ccfBody ccf)])
     else return ()
   return body
 

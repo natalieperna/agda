@@ -3,6 +3,9 @@ module Agda.Compiler.Treeless.NVTTerm where
 
 -- A variant of |TTerm| using named variables.
 
+import Prelude hiding (Floating)
+
+import Control.Arrow (first)
 import Control.Applicative
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.Reader
@@ -34,7 +37,8 @@ import Data.Word (Word64)
 import Agda.Utils.Impossible
 #include "undefined.h"
 
-newtype Var = V {unV :: Int} deriving (Eq, Ord, Show)
+newtype Var = V {unV :: Int} deriving (Eq, Ord)
+instance Show Var where showsPrec _ (V i) = ('v' :) . shows i
 
 newtype VarSet = VarSet IntSet
 instance Show VarSet where showsPrec p (VarSet s) = showsPrec p s
@@ -452,20 +456,20 @@ unifyNVConPat' (cv1, cp1) (cv2, cp2) = if cv1 /= cv2 then Nothing else unifyNVCo
 
 deepUnifyNVConPat1in2 :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 deepUnifyNVConPat1in2 p1@(cv1, cp1) p2@(cv2, cp2@(NVConPat ct2 dft2 c2 ps2))
-  = case unifyNVConPat' p1 p2 of
-  Nothing -> h ps2
-      where
-        h :: [NVPat] -> Maybe (NVConPat, PU)
-        h [] = Nothing
-        h (pat : pats)  | NVPAsCon vi cpi <- pat
-                        , Just (cp', pu) <- deepUnifyNVConPat1in2 p1 (vi, cpi)
-                        = do
-                           cp'' <- attachToNVConPat vi cp' cp2 -- inefficient, could attach to |pat|
-                           Just (cp'', pu)
-                                   -- \edcomm{WK}{And |pu| is now wrong. For the time being, |pu| is unused...}
-                        | otherwise
-                        = h pats
-  x -> x
+  | cv1 == cv2
+  , Just p <- unifyNVConPat' p1 p2
+  = Just p
+  | otherwise
+  = first (NVConPat ct2 dft2 c2) <$> h id ps2
+    where
+      h :: ([NVPat] -> [NVPat]) -> [NVPat] -> Maybe ([NVPat], PU)
+      h acc [] = Nothing
+      h acc (pat : pats)
+        | NVPAsCon vi cpi <- pat
+        , Just (cpi', pu) <- deepUnifyNVConPat1in2 p1 (vi, cpi)
+        = Just (acc $ NVPAsCon vi cpi' : pats, pu)
+        | otherwise
+        = h (acc . (pat :)) pats
 
 deepUnifyNVConPat :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 deepUnifyNVConPat p1 p2 = deepUnifyNVConPat1in2 p1 p2 `mplus` deepUnifyNVConPat1in2 p2 p1
@@ -554,3 +558,26 @@ matchNVPats [] [] r = Just r
 matchNVPats (p1 : ps1) (p2 : ps2) r  =    matchNVPat0 p1 p2 r
                                      >>=  matchNVPats ps1 ps2
 matchNVPats _ _ _ = Nothing
+
+data Floating
+  = FloatingPLet
+    { pletPat :: NVPat
+    , pletRHS :: NVTTerm
+    , pletFVars :: VarSet -- free variables of pletRHS
+    }
+  | FloatingCase
+    { fcaseScrutinee :: Var
+    , fcasePat :: NVConPat
+    }
+   deriving (Show)
+
+flFreeVars :: Floating -> VarSet
+flFreeVars plet@(FloatingPLet {}) = pletFVars plet
+flFreeVars (FloatingCase v _) = singletonVarSet v
+
+flBoundVars :: Floating -> [Var]
+flBoundVars (FloatingPLet {pletPat = p}) = patVars p
+flBoundVars (FloatingCase {fcasePat = cp}) = boundNVConPatVars cp
+
+flRevBoundVars :: Floating -> [Var]
+flRevBoundVars = reverse . flBoundVars
