@@ -11,7 +11,7 @@ import Control.Monad.Reader
 import Data.Maybe
 
 import Agda.Syntax.Treeless
-import Agda.Compiler.Treeless.NVTTerm
+import Agda.Syntax.NVTTerm
 import Agda.Utils.Pretty
 
 data PEnv = PEnv { pPrec :: Int
@@ -140,21 +140,27 @@ pTerm t = case t of
     ) <$> pTerm' 0 (NVTVar x)
       <*> mapM pAlt alts
       <*> pTerm' 0 def
-    where
-      pAlt (NVTALit l b) = pAlt' <$> pTerm' 0 (NVTLit l) <*> pTerm' 0 b
-      pAlt (NVTAGuard g b) =
-        pAlt' <$> ((text "_" <+> text "|" <+>) <$> pTerm' 0 g)
-              <*> (pTerm' 0 b)
-      pAlt (NVTACon c cvars b) =
-        -- withNames (length cvars) $ \ xs ->
-        pAlt' <$> pTerm' 0 (NVTApp (NVTCon c) [NVTVar i | i <- reverse cvars])
-              <*> pTerm' 0 b
-      pAlt' p b = sep [p <+> text "→", nest 2 b]
 
   NVTUnit -> pure $ text "()"
   NVTSort -> pure $ text "Set"
   NVTErased -> pure $ text "_"
   NVTError err -> paren 9 $ pure $ text "error" <+> text (show (show err))
+
+pAlt :: NVTAlt -> P Doc
+pAlt (NVTALit l b) = pAlt' <$> pTerm' 0 (NVTLit l) <*> pTerm' 0 b
+pAlt (NVTAGuard g b) =
+        pAlt' <$> ((text "_" <+> text "|" <+>) <$> pTerm' 0 g)
+              <*> (pTerm' 0 b)
+pAlt (NVTACon c cvars b) =
+        -- withNames (length cvars) $ \ xs ->
+        pAlt' <$> pTerm' 0 (NVTApp (NVTCon c) [NVTVar i | i <- reverse cvars])
+              <*> pTerm' 0 b
+
+pAlt' :: Doc -> Doc -> Doc
+pAlt' p b = sep [p <+> text "→", nest 2 b]
+
+instance Pretty NVTAlt where
+  prettyPrec p t = runP $ prec p (pAlt t)
 
 instance Pretty NVPat where
   prettyPrec p t = runP $ prec p (pPat t)

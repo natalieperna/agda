@@ -1,5 +1,8 @@
 {-# LANGUAGE CPP #-}
-module Agda.Compiler.Treeless.NVTTerm where
+module Agda.Compiler.Treeless.NVTTerm
+  ( module Agda.Compiler.Treeless.NVTTerm
+  , module Agda.Syntax.NVTTerm
+  ) where
 
 -- A variant of |TTerm| using named variables.
 
@@ -26,22 +29,21 @@ import Agda.Syntax.Position
 import Agda.Syntax.Fixity
 import Agda.Syntax.Abstract.Name
 import qualified Agda.Syntax.Concrete.Name as C
+import Agda.Syntax.NVTTerm
 import Agda.TypeChecking.Substitute
 import Agda.Compiler.Treeless.Subst
 import Agda.Compiler.Treeless.Compare
+import Agda.Compiler.Treeless.NVTTerm.Pretty
 
-import Agda.Utils.Permutation
+-- import Agda.Utils.Permutation
+import qualified Agda.Utils.Pretty as P
 
 import Data.Word (Word64)
 
 import Agda.Utils.Impossible
 #include "undefined.h"
 
-newtype Var = V {unV :: Int} deriving (Eq, Ord)
-instance Show Var where showsPrec _ (V i) = ('v' :) . shows i
-
-newtype VarSet = VarSet IntSet
-instance Show VarSet where showsPrec p (VarSet s) = showsPrec p s
+import Debug.Trace
 
 emptyVarSet :: VarSet
 emptyVarSet = VarSet IntSet.empty
@@ -51,6 +53,8 @@ insertVarSet :: Var -> VarSet -> VarSet
 insertVarSet (V i) (VarSet s) = VarSet $ IntSet.insert i s
 deleteVarSet :: Var -> VarSet -> VarSet
 deleteVarSet (V i) (VarSet s) = VarSet $ IntSet.delete  i s
+nullVarSet :: VarSet -> Bool
+nullVarSet (VarSet s) = IntSet.null s
 elemVarSet :: Var -> VarSet -> Bool
 elemVarSet (V i) (VarSet s) = IntSet.member i s
 listToVarSet :: [Var] -> VarSet
@@ -59,82 +63,8 @@ unionVarSet :: VarSet -> VarSet -> VarSet
 unionVarSet (VarSet s1) (VarSet s2) = VarSet $ IntSet.union s1 s2
 unionsVarSet :: [VarSet] -> VarSet
 unionsVarSet = foldr unionVarSet emptyVarSet
-
-data NVTTerm
-  = NVTVar Var
-  | NVTPrim TPrim
-  | NVTDef NVTDefVariant QName
-  | NVTApp NVTTerm [NVTTerm]
-  | NVTLam Var NVTTerm
-  | NVTLit Literal
-  | NVTCon QName
-  | NVTLet Var NVTTerm NVTTerm
-  | NVTCase Var CaseType NVTTerm [NVTAlt]
-  -- ^ Case scrutinee (always variable), case type, default value, alternatives
-  | NVTUnit
-  | NVTSort
-  | NVTErased
-  | NVTError TError
-  deriving (Show)
-
-
-data NVTAlt
-  = NVTACon QName [Var] NVTTerm
-  | NVTAGuard NVTTerm NVTTerm
-  | NVTALit Literal NVTTerm
-  deriving (Show)
-
--- ``Flavour'' of @NVTDef@, analogous to @TDefVariant@
-data NVTDefVariant
-  = NVTDefDefault             -- traditional variants: "du*" or "d*"
-  | NVTDefAbstractPLet [Var]  -- additional variable arguments for "dv*" variant.
-  deriving (Show)
-
-instance Eq NVTTerm where (==) = eqNVTTerm
-
-eqNVTTerm :: NVTTerm -> NVTTerm -> Bool
-eqNVTTerm = eqT IntMap.empty
-  where
-    eqV :: IntMap Int -> Var -> Var -> Bool
-    eqV m (V i) (V j) = case IntMap.lookup i m of
-      Nothing -> i == j
-      Just j' -> j == j'
-
-    eqVs :: IntMap Int -> [Var] -> [Var] -> Bool
-    eqVs m [] [] = True
-    eqVs m (u : us) (v : vs) = eqV m u v && eqVs m us vs
-    eqVs _ _ _ = False
-
-    eqVariant :: IntMap Int -> NVTDefVariant -> NVTDefVariant -> Bool
-    eqVariant _ NVTDefDefault NVTDefDefault = True
-    eqVariant m (NVTDefAbstractPLet us) (NVTDefAbstractPLet vs) = eqVs m us vs
-    eqVariant _ _ _ = False
-
-    eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool
-    eqT m (NVTVar v) (NVTVar v') = eqV m v v'
-    eqT m (NVTPrim p) (NVTPrim p') = p == p'
-    eqT m (NVTDef var n) (NVTDef var' n') = n == n' && eqVariant m var var'
-    eqT m (NVTApp f ts) (NVTApp f' ts') = and $ zipWith (eqT m) (f : ts) (f' : ts')
-    eqT m (NVTLam (V i) b) (NVTLam (V j) b') = eqT (IntMap.insert i j m) b b'
-    eqT m (NVTLit l) (NVTLit l') = l == l'
-    eqT m (NVTCon n) (NVTCon n') = n == n'
-    eqT m (NVTLet (V i) e b) (NVTLet (V j) e' b') = eqT m e e' && eqT (IntMap.insert i j m) b b'
-    eqT m (NVTCase v cty dft alts) (NVTCase v' cty' dft' alts') =
-      eqV m v v' && and (zipWith (eqA m) alts alts')
-    eqT m NVTUnit NVTUnit = True
-    eqT m NVTSort NVTSort = True
-    eqT m NVTErased NVTErased = True
-    eqT m (NVTError t) (NVTError t') = t == t'
-    eqT _ _ _ = False
-
-    eqA :: IntMap Int -> NVTAlt -> NVTAlt -> Bool
-    eqA m (NVTACon c vs b) (NVTACon c' vs' b') = let
-        m' = IntMap.fromList (zip (map unV vs) (map unV vs')) `IntMap.union` m
-      in eqT m' b b'
-    eqA m (NVTAGuard g b) (NVTAGuard g' b') = eqT m g g' && eqT m b b'
-    eqA m (NVTALit lit b) (NVTALit lit' b') = lit == lit' && eqT m b b'
-    eqA _ _ _ = False
-
+intersectionVarSet :: VarSet -> VarSet -> VarSet
+intersectionVarSet (VarSet s1) (VarSet s2) = VarSet $ IntSet.intersection s1 s2
 
 fromTTerm' :: TTerm -> NVTTerm
 fromTTerm' t = runIdentity $ evalStateT (fromTTerm [] t) 0
@@ -195,7 +125,8 @@ toTTerm' :: NVTTerm -> TTerm
 toTTerm' = toTTerm []
 
 fromVar :: Nat -> [Var] -> Var -> Nat -- first argument is __IMPOSSIBLE__
-fromVar err vs v = maybe err id $ elemIndex v vs
+fromVar err vs v = maybe (tr err) id $ elemIndex v vs
+  where  tr = trace $ "fromVar " ++ shows vs (' ' : show v)
 
 toTTerm :: [Var] -> NVTTerm -> TTerm
 toTTerm vs (NVTVar v) = TVar (fromVar __IMPOSSIBLE__ vs v)
@@ -270,11 +201,6 @@ bvarsNVTAlt (NVTAGuard g b) = bvarsNVTTerm g `IntSet.union` bvarsNVTTerm b
 bvarsNVTAlt (NVTALit lit b) = bvarsNVTTerm b
 -}
 
-newtype NVRename = NVRename (IntMap Var)
-
-emptyNVRename :: NVRename
-emptyNVRename = NVRename IntMap.empty
-
 singletonNVRename :: Var -> Var -> NVRename
 singletonNVRename (V i) v@(V j) = NVRename $
    if i == j then IntMap.empty else IntMap.singleton i v
@@ -305,9 +231,9 @@ renameVar :: NVRename -> Var -> Var
 renameVar (NVRename m) v@(V i) = IntMap.findWithDefault v i m
 
 renameNVTTerm :: NVRename -> NVTTerm -> NVTTerm
-renameNVTTerm r@(NVRename m) t
-  | IntMap.null m  = t
-  | otherwise      = renTTerm r t
+renameNVTTerm r0@(NVRename m) t0
+  | IntMap.null m  = t0
+  | otherwise      = renTTerm r0 t0
   where
     renTTerm :: NVRename -> NVTTerm -> NVTTerm
     renTTerm r (NVTVar v) = NVTVar $ renameVar r v
@@ -316,18 +242,26 @@ renameNVTTerm r@(NVRename m) t
     renTTerm r (NVTDef (NVTDefAbstractPLet vs) name)
       = NVTDef (NVTDefAbstractPLet $ map (renameVar r) vs) name
     renTTerm r (NVTApp f ts) = NVTApp (renTTerm r f) (map (renTTerm r) ts)
-    renTTerm r (NVTLam v b) = let
-      r'@(NVRename m') = deleteNVRename v r
-      in if v `elem` IntMap.elems m'
-      then __IMPOSSIBLE__ -- unexpected variable capture
-      else NVTLam v $ renameNVTTerm r' b
+    renTTerm r t@(NVTLam v b) = let
+        r'@(NVRename m') = deleteNVRename v r
+        bad (y,x) = v == x && (V y `elemVarSet` fvarsNVTTerm b)
+      in case filter bad $ IntMap.toList m' of
+        [] -> NVTLam v $ renameNVTTerm r' b
+        ps -> trace ("captured variables " ++ show ps
+                 ++ "\nin renTTerm " ++ shows r " " ++ P.prettyShow t
+                 ++ "\nin renameNVTTerm " ++ shows r0 " " ++ P.prettyShow t0
+                    ) __IMPOSSIBLE__ -- unexpected variable capture
     renTTerm r t@(NVTLit _) = t
     renTTerm r t@(NVTCon _) = t
-    renTTerm r (NVTLet v e b) = let
-      r'@(NVRename m') = deleteNVRename v r
-      in if v `elem` IntMap.elems m'
-      then __IMPOSSIBLE__ -- unexpected variable capture
-      else NVTLet v (renTTerm r e) (renameNVTTerm r' b)
+    renTTerm r t@(NVTLet v e b) = let
+        r'@(NVRename m') = deleteNVRename v r
+        bad (y,x) = v == x && (V y `elemVarSet` fvarsNVTTerm b)
+      in case filter bad $ IntMap.toList m' of
+        [] -> NVTLet v (renTTerm r e) (renameNVTTerm r' b)
+        ps -> trace ("captured variables " ++ show ps
+                 ++ "\nin renTTerm " ++ shows r " " ++ P.prettyShow t
+                 ++ "\nin renameNVTTerm " ++ shows r0 " " ++ P.prettyShow t0
+                    ) __IMPOSSIBLE__ -- unexpected variable capture
     renTTerm r (NVTCase v caseType dft alts) = let
         v' = renameVar r v
       in NVTCase v' caseType (renTTerm r dft) $ map (renameNVTAlt r) alts
@@ -338,21 +272,17 @@ renameNVTTerm r@(NVRename m) t
 
     -- The |NVRename| argument has already been confirmed to be non-empty
     renameNVTAlt :: NVRename  -> NVTAlt -> NVTAlt
-    renameNVTAlt m (NVTACon name cvars b) =
-      let r'@(NVRename m') = foldr deleteNVRename r cvars
-      in if any (`elem` IntMap.elems m') cvars
-      then __IMPOSSIBLE__ -- unexpected variable capture
-      else  NVTACon name cvars $ renameNVTTerm r' b
+    renameNVTAlt r a@(NVTACon name cvars b) = let
+        r'@(NVRename m') = foldr deleteNVRename r cvars
+        bad (y,x) = (x `elem` cvars) && (V y `elemVarSet` fvarsNVTTerm b)
+      in case filter bad $ IntMap.toList m' of
+        [] -> NVTACon name cvars $ renameNVTTerm r' b
+        ps -> trace ("captured variables " ++ show ps
+                 ++ "\nin renameNVTAlt " ++ shows r " " ++ P.prettyShow a
+                 ++ "\nin renameNVTTerm " ++ shows r0 " " ++ P.prettyShow t0
+                    ) __IMPOSSIBLE__ -- unexpected variable capture
     renameNVTAlt r (NVTAGuard g b) = NVTAGuard (renTTerm r g) (renTTerm r b)
     renameNVTAlt r (NVTALit lit b) = NVTALit lit (renTTerm r b)
-
-data NVConPat = NVConPat CaseType NVTTerm QName [NVPat]
-  deriving (Show)
-
-data NVPat
-  = NVPVar Var
-  | NVPAsCon Var NVConPat
-  deriving (Show)
 
 innerNVPat :: NVPat -> Maybe NVConPat
 innerNVPat (NVPVar _) = Nothing
@@ -414,13 +344,6 @@ caseNVConPatU r a (NVConPat ct dft c pats) b = NVTCase (renameVar r a) ct dft . 
     b' <- foldM (\ t (v, p) -> caseNVConPatU r' v p t) b $ withInnerNVPats pats
     return $ NVTACon c cvars b'
 
--- pattern unifiers:
-type PU = (NVRename, NVRename)
-
-emptyPU :: PU
-emptyPU = (emptyNVRename, emptyNVRename)
-
-
 -- The result of @unifyNVPat@ contains the unified pattern,
 -- and the renamings for matching the argument patterns into that.
 --(Full substitutions are not necessary,
@@ -431,7 +354,38 @@ unifyNVPat :: NVPat -> NVPat -> Maybe (NVPat, PU)
 unifyNVPat p1 p2 = unifyNVPat0 p1 p2 emptyPU
 
 unifyNVPat0 :: NVPat -> NVPat -> PU -> Maybe (NVPat, PU)
-unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2))
+unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2)) = case p2 of
+  NVPVar v2@(V i2) -> let v1@(V i1) = getNVPatVar p1
+      in case IntMap.lookup i2 m2 of
+    Just v1' -> if v1 /= v1' then Nothing
+      else case IntMap.lookup i1 m1 of
+        Just v2' ->  if v2 /= v2'  then Nothing
+          else Just (p1, pu)
+        Nothing -> Just (p1, pu)
+    Nothing -> let r2' = insertNVRename v2 v1 r2
+      in case IntMap.lookup i1 m1 of
+        Just v2' ->  if v2 /= v2'  then Nothing
+          else Just (p1, (r1, r2'))
+        Nothing -> Just (p1, (r1, r2'))
+  NVPAsCon v2@(V i2) cp2 -> case p1 of
+    NVPVar v1@(V i1) -> case IntMap.lookup i1 m1 of
+      Just v2' -> if v2 /= v2' then Nothing
+        else case IntMap.lookup i2 m2 of
+          Just v1' ->  if v1 /= v1'  then Nothing
+            else Just (p2, pu)
+          Nothing -> Just (p2, pu)
+      Nothing -> let r1' = insertNVRename v1 v2 r1
+        in case IntMap.lookup i2 m2 of
+          Just v1' ->  if v1 /= v1'  then Nothing
+            else Just (p2, (r1', r2))
+          Nothing -> Just (p2, (r1', r2))
+    NVPAsCon v1@(V i1) cp1 -> case unifyNVConPat0 cp1 cp2 pu of
+      Nothing -> Nothing
+      Just (cp', (r1', r2')) -> Just (NVPAsCon v2 cp'
+                                     , (insertNVRename v1 v2 r1', r2'))
+
+unifyNVPat0Old :: NVPat -> NVPat -> PU -> Maybe (NVPat, PU)
+unifyNVPat0Old p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2))
    | v1@(V i1) <- getNVPatVar p1
    , v2@(V i2) <- getNVPatVar p2
   = case IntMap.lookup i1 m1 of
@@ -454,6 +408,23 @@ unifyNVConPat cp1 cp2 = unifyNVConPat0 cp1 cp2 emptyPU
 unifyNVConPat' :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 unifyNVConPat' (cv1, cp1) (cv2, cp2) = if cv1 /= cv2 then Nothing else unifyNVConPat cp1 cp2
 
+unifyNVConPat0 :: NVConPat -> NVConPat -> PU -> Maybe (NVConPat, PU)
+unifyNVConPat0 (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2)
+               pu@(r1@(NVRename m1), r2@(NVRename m2))
+  = if c1 /= c2
+    then Nothing
+    else case unifyNVPats ps1 ps2 pu of
+      Nothing -> Nothing
+      Just (ps', pu') ->Just (NVConPat ct1 dft1 c1 ps', pu')
+
+unifyNVPats :: [NVPat] -> [NVPat] -> PU -> Maybe ([NVPat], PU)
+unifyNVPats [] [] pu = Just ([], pu)
+unifyNVPats (p1 : ps1) (p2 : ps2) pu = do
+  (p', pu') <- unifyNVPat0 p1 p2 pu
+  (ps', pu'') <- unifyNVPats ps1 ps2 pu'
+  Just (p' : ps', pu'')
+unifyNVPats _ _ _ = Nothing
+
 deepUnifyNVConPat1in2 :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 deepUnifyNVConPat1in2 p1@(cv1, cp1) p2@(cv2, cp2@(NVConPat ct2 dft2 c2 ps2))
   | cv1 == cv2
@@ -473,24 +444,6 @@ deepUnifyNVConPat1in2 p1@(cv1, cp1) p2@(cv2, cp2@(NVConPat ct2 dft2 c2 ps2))
 
 deepUnifyNVConPat :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 deepUnifyNVConPat p1 p2 = deepUnifyNVConPat1in2 p1 p2 `mplus` deepUnifyNVConPat1in2 p2 p1
-
-
-unifyNVConPat0 :: NVConPat -> NVConPat -> PU -> Maybe (NVConPat, PU)
-unifyNVConPat0 (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2)
-               pu@(r1@(NVRename m1), r2@(NVRename m2))
-  = if c1 /= c2
-    then Nothing
-    else case unifyNVPats ps1 ps2 pu of
-      Nothing -> Nothing
-      Just (ps', pu') ->Just (NVConPat ct1 dft1 c1 ps', pu')
-
-unifyNVPats :: [NVPat] -> [NVPat] -> PU -> Maybe ([NVPat], PU)
-unifyNVPats [] [] pu = Just ([], pu)
-unifyNVPats (p1 : ps1) (p2 : ps2) pu = do
-  (p', pu') <- unifyNVPat0 p1 p2 pu
-  (ps', pu'') <- unifyNVPats ps1 ps2 pu'
-  Just (p' : ps', pu'')
-unifyNVPats _ _ _ = Nothing
 
 -- attaching to an inner variable is accepted if the corresponding subpatterns unify.
 attachNVConPat :: Var -> NVConPat -> NVPat -> Maybe NVPat
@@ -559,17 +512,12 @@ matchNVPats (p1 : ps1) (p2 : ps2) r  =    matchNVPat0 p1 p2 r
                                      >>=  matchNVPats ps1 ps2
 matchNVPats _ _ _ = Nothing
 
-data Floating
-  = FloatingPLet
-    { pletPat :: NVPat
-    , pletRHS :: NVTTerm
-    , pletFVars :: VarSet -- free variables of pletRHS
+mkFloatingPLet :: NVPat -> NVTTerm -> Floating
+mkFloatingPLet pat rhs = FloatingPLet
+    { pletPat    = pat
+    , pletRHS    = rhs
+    , pletFVars  = fvarsNVTTerm rhs
     }
-  | FloatingCase
-    { fcaseScrutinee :: Var
-    , fcasePat :: NVConPat
-    }
-   deriving (Show)
 
 flFreeVars :: Floating -> VarSet
 flFreeVars plet@(FloatingPLet {}) = pletFVars plet
@@ -581,3 +529,45 @@ flBoundVars (FloatingCase {fcasePat = cp}) = boundNVConPatVars cp
 
 flRevBoundVars :: Floating -> [Var]
 flRevBoundVars = reverse . flBoundVars
+
+-- The functions |renameNVPat|, |renameNVConPat|, and |renameFloating|
+-- are to be used with renamings resulting from pushout unification.
+
+renameNVConPat :: NVRename -> NVConPat -> NVConPat
+renameNVConPat r (NVConPat ct dft c pats)
+  = NVConPat ct (renameNVTTerm r dft) c (map (renameNVPat r) pats)
+
+renameNVPat :: NVRename -> NVPat -> NVPat
+renameNVPat r (NVPVar v) = NVPVar $ renameVar r v
+renameNVPat r (NVPAsCon v cp) = NVPAsCon (renameVar r v) (renameNVConPat r cp)
+
+renameNVPatTopVar :: NVRename -> NVPat -> NVPat
+renameNVPatTopVar r (NVPVar v) = NVPVar $ renameVar r v
+renameNVPatTopVar r (NVPAsCon v cp) = NVPAsCon (renameVar r v) cp
+
+renameFloating :: NVRename -> Floating -> Floating
+renameFloating r fl@(FloatingPLet {}) = mkFloatingPLet pat' rhs'
+  where
+   pat' = renameNVPat r $ pletPat fl
+   rhs' = {- renameNVTTerm r $ -} pletRHS fl
+renameFloating r fl@(FloatingCase {}) = FloatingCase
+  {fcaseScrutinee = renameVar r $ fcaseScrutinee fl
+  ,fcasePat = renameNVConPat r $ fcasePat fl
+  }
+
+matchFloating :: Floating -> Floating -> Maybe NVRename
+matchFloating fl1@(FloatingPLet {pletPat = pat1, pletRHS = rhs1})
+              fl2@(FloatingPLet {pletPat = pat2, pletRHS = rhs2})
+  = if rhs1 == rhs2
+  then matchNVPat pat1 pat2
+  else Nothing
+matchFloating fl1@(FloatingCase v1 cp1) fl2@(FloatingCase v2 cp2)
+  = if v1 == v2
+  then matchNVConPat cp1 cp2
+  else -- \edcomm{WK}{deepMathching not yet connected here!}
+       Nothing
+matchFloating _ _ = Nothing
+ -- \edcomm{WK}{Matching FloatingCase into FloatingPLet still missing.}
+
+matchFloatings :: Floating -> [Floating] -> Maybe NVRename
+matchFloatings fl = msum . map (matchFloating fl)

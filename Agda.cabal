@@ -280,6 +280,7 @@ library
                     Agda.Syntax.Internal.SanityCheck
                     Agda.Syntax.Literal
                     Agda.Syntax.Notation
+                    Agda.Syntax.NVTTerm
                     Agda.Syntax.Parser.Alex
                     Agda.Syntax.Parser.Comments
                     Agda.Syntax.Parser.Layout
