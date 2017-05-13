@@ -664,8 +664,10 @@ renameFloating r fl@(FloatingCase {}) = FloatingCase
 matchFloating :: Floating -> Floating -> Maybe NVRename
 matchFloating fl1@(FloatingPLet {pletPat = pat1, pletRHS = rhs1})
               fl2@(FloatingPLet {pletPat = pat2, pletRHS = rhs2})
-  = if rhs1 == rhs2
-  then matchNVPat pat1 pat2
+  = if let b = rhs1 == rhs2
+       in trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 rhs1  P.$$ P.text " |=> " P.<+> P.prettyPrec 10 rhs2  P.<+> P.text " --> " P.$$ P.pretty b) b
+  then let m = matchNVPat pat1 pat2
+       in trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 pat1 P.$$ P.text " |=> " P.<+> P.prettyPrec 10 pat2  P.<+> P.text " --> " P.$$ P.pretty m) m
   else Nothing
 matchFloating fl1@(FloatingCase v1 cp1) fl2@(FloatingCase v2 cp2)
   = if v1 == v2

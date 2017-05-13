@@ -9,6 +9,7 @@ import Control.Arrow ((&&&), (***), first, second)
 import Control.Applicative
 import Control.Monad.Reader
 import Data.Maybe
+import qualified Data.IntMap as IntMap
 
 import Agda.Syntax.Treeless
 import Agda.Syntax.NVTTerm
@@ -158,6 +159,12 @@ pAlt (NVTACon c cvars b) =
 
 pAlt' :: Doc -> Doc -> Doc
 pAlt' p b = sep [p <+> text "→", nest 2 b]
+
+instance Pretty Var where
+  prettyPrec p t = runP $ prec p (pVar t)
+
+instance Pretty NVRename where
+  prettyPrec p (NVRename m) = prettyPrec p (IntMap.toList m)
 
 instance Pretty NVTAlt where
   prettyPrec p t = runP $ prec p (pAlt t)

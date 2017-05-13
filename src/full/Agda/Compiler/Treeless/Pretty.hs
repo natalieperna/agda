@@ -155,3 +155,19 @@ pTerm t = case t of
   TSort -> pure $ text "Set"
   TErased -> pure $ text "_"
   TError err -> paren 9 $ pure $ text "error" <+> text (show (show err))
+
+
+instance Pretty PLet where
+  prettyPrec p t = runP $ prec p (pPLet t)
+
+pPLet :: PLet -> P Doc
+pPLet plet = pTerm $ eTerm plet
+
+instance Pretty CrossCallFloat where
+  prettyPrec p t = runP $ prec p (pCCF t)
+
+pCCF :: CrossCallFloat -> P Doc
+pCCF ccf = do
+  plets <- mapM pPLet $ ccfPLets ccf
+  rhs <- pTerm $ ccfBody ccf
+  return $ text "PLETS" <+> nest 6 (vcat plets) $$ text "BODY" <+> nest 6 rhs
