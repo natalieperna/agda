@@ -48,7 +48,7 @@ attachConPatToFloating :: Var -> NVConPat -> Floating -> Maybe Floating
 attachConPatToFloating v conPat plet@(FloatingPLet {})
   = case attachNVConPat v conPat (pletPat plet) of
       Nothing -> Nothing
-      Just pat' -> Just plet { pletPat = pat' }
+      Just pat' -> Just $ mkFloatingPLet pat' (pletRHS plet)
 attachConPatToFloating v conPat fcase@(FloatingCase {})
   = case attachToNVConPat v conPat (fcasePat fcase) of
       Nothing -> Nothing
@@ -66,14 +66,7 @@ applyFloating fcase@(FloatingCase v p) b = caseNVConPat v p b
 -- If |splitPLet t = Just (fl, t')|, then |applyFloating fl t' = t|.
 splitFloating :: NVTTerm -> Maybe (Floating, NVTTerm)
 splitFloating (NVTLet v t1 t2) = case h (NVPVar v) t2 of
-   (pat, t')  -> Just
-      (FloatingPLet
-        { pletPat = pat
-        , pletRHS = t1
-        , pletFVars = fvarsNVTTerm t1
-        }
-      , t'
-      )
+   (pat, t')  -> Just (mkFloatingPLet pat t1, t')
    where
      h :: NVPat -> NVTTerm -> (NVPat, NVTTerm)
      h p t = case splitSingleAltCase t of
@@ -102,14 +95,6 @@ splitSingleAltCase :: NVTTerm -> Maybe (Var, NVConPat, NVTTerm)
 splitSingleAltCase (NVTCase v ct dft [NVTACon c cvars t2]) | harmless dft
   = Just (v, NVConPat ct dft c $ map NVPVar cvars, t2)
 splitSingleAltCase _ = Nothing
-
--- | ``harmless'' in the sense of negligible as default expression in |TCase|:
-harmless :: NVTTerm -> Bool
-harmless (NVTError _)  = True
-harmless NVTUnit       = True
-harmless NVTErased     = True
-harmless NVTSort       = True
-harmless _             = False
 
 -- |  @floatPLet@ floats pattern lets occuring in multiple branches
 --    to the least join point of those branches.
@@ -146,70 +131,82 @@ floatNVPatterns doCrossCallFloat t
 
 -- | @joinFloatings@ returns the (maximal) common elements first, and then a nubbed concatenation (of the maximal elements).
 -- \edcomm{WK}{Propagate |PU|?}
-joinFloatings :: [Floating] -> [Floating] -> (([Floating], [Floating]))
-joinFloatings [] fls2 = ([], fls2)
-joinFloatings fls1 [] = ([], fls1)
+joinFloatings :: Monad m => [Floating] -> [Floating] -> U m (([Floating], [Floating]))
+joinFloatings [] fls2 = return ([], fls2)
+joinFloatings fls1 [] = return ([], fls1)
 joinFloatings x y = h id x y
   where
-    h acc [] fls2 = (acc [], fls2)
-    h acc (fl1 : fls1) fls2 = let (mc, fls2') = insertFloating fl1 fls2
-      in case mc of
+    h acc [] fls2 = return (acc [], fls2)
+    h acc (fl1 : fls1) fls2 = do
+      (mc, fls2') <- insertFloating fl1 fls2
+      case mc of
         Nothing -> h acc fls1 fls2'
-        Just (fl, (r1, r2)) -> h (acc . (fl :)) (map (renameFloating r1) fls1) fls2'
+        Just (fl, (r1, r2))
+          -> h (acc . (fl :)) (map (renameFloating r1) fls1) fls2'
           -- \edcomm{WK}{Do things in |acc| need to be renamed? Is |acc| in the right place?}
 
 -- If @findFloating fl fls = Just ((fl', pu), (fls1, fls2))@
 -- then @fls = fls1 ++ fl0 : fls2@ for some @fl0@,
 -- which, unified with @fl@, yields @fl'@.
-findFloating :: Floating -> [Floating] -> Maybe ((Floating, PU), ([Floating], [Floating]))
-findFloating fl [] = Nothing -- Just ((fl, emptyPU), ([], []))
-findFloating plet@(FloatingPLet {pletPat = pat, pletRHS = t}) (fl : fls)
-   | FloatingPLet {pletPat = pat', pletRHS = t'} <- fl
-   , t == t'
-   , Just (pat'', pu) <- unifyNVPat pat pat'
-   = Just ((mkFloatingPLet pat'' t', pu), ([], fls))
+findFloating :: Monad m => Floating -> [Floating] -> U m (Maybe ((Floating, PU), ([Floating], [Floating])))
+findFloating fl [] = return Nothing
+findFloating plet1@(FloatingPLet {pletPat = pat1, pletRHS = t1}) (fl : fls)
+   | FloatingPLet {pletPat = pat2, pletRHS = t2} <- fl
+   , t1 == t2
+   = do
+     (m, pu) <- runStateT (unifyNVPatU pat1 pat2) emptyPU
+     case m of
+       Just pat3 -> do
+         t3 <- evalStateT (copyNVTTerm t1) emptyNVRename
+         return $ Just ((mkFloatingPLet pat3 t3, pu), ([], fls))
+       _ -> fmap (second (first (fl :))) <$> findFloating plet1 fls
    | otherwise
-   = second (first (fl :)) <$> findFloating plet fls
+   = fmap (second (first (fl :))) <$> findFloating plet1 fls
+{-
 findFloating fcase@(FloatingCase cv cpat) (fl : fls)
   | FloatingCase cv' cpat' <- fl
   , Just (cpat'', pu) <- deepUnifyNVConPat (cv, cpat) (cv', cpat')
   = Just ((FloatingCase cv' cpat'', pu), ([], fls))
   | otherwise
   = second (first (fl :)) <$> findFloating fcase fls
+-}
+findFloating _ _ = return Nothing -- as long as |FloatingCase| is deactivated
 
 -- If @insertFloating fl fls = (mfl, fls')@,
 -- then @fls'@ is the result either of adding @fl@ to @fls@,
 --               or of unifying @fl@ with onle of the elements of @fls@,
 -- and @mfl@ is @Just (fl', pu)@ if @fl'@ is the result of that unification.
-insertFloating :: Floating -> [Floating] -> (Maybe (Floating, PU), [Floating])
-insertFloating fl fls = case findFloating fl fls of
-  Just (p@(fl', (r1, r2)), (fls1, fls2))
-    -> (Just p
-       , fl' : map (renameFloating r1) (fls1 ++ map (renameFloating r2) fls2))
-  Nothing -> let
-      flHasToGoBelow = any (`elemVarSet` flFreeVars fl) . flBoundVars
-      (below, above) = span flHasToGoBelow $ reverse fls
-    in (Nothing, reverse above ++ fl : reverse below)
+insertFloating :: Monad m => Floating -> [Floating] -> U m (Maybe (Floating, PU), [Floating])
+insertFloating fl fls = do
+  m <- findFloating fl fls
+  return $ case m of
+    Just (p@(fl', (r1, r2)), (fls1, fls2))
+      -> (Just p
+         , fl' : map (renameFloating r1 . renameFloating r2) (fls1 ++ fls2))
+    Nothing -> let
+        flHasToGoBelow = any (`elemVarSet` flFreeVars fl) . flBoundVars
+        (below, above) = span flHasToGoBelow $ reverse fls
+      in (Nothing, reverse above ++ fl : reverse below)
 
 -- | @joinFloatingss@ returns the elements that are ``common'' to
 -- at least two constituent lists first,
 -- and then a nubbed concatenation of all (maximal) elements.
-joinFloatingss :: [[Floating]] -> ([Floating], [Floating])
-joinFloatingss [] = ([], [])
-joinFloatingss [fls] = ([], fls)
-joinFloatingss (fls : flss) = case joinFloatingss flss of
-  (flsC, flsR) -> case joinFloatings fls flsR of
-    (flsC', flsR') -> let
-        (flsCC, flsC'') = joinFloatings flsC' flsC
-        prt i = show . (P.text ("XXX" ++ shows i " ") P.<+>) . P.nest 5
-      in -- trace
-         --  (unlines $ zipWith prt [1..]
-         --   [P.pretty flsC'
-         --   ,P.pretty flsC
-         --   ,P.pretty flsC''
-         --   ,P.pretty flsCC
-         --   ])
-         (flsC'', flsR')
+joinFloatingss :: Monad m => [[Floating]] -> U m ([Floating], [Floating])
+joinFloatingss [] = return ([], [])
+joinFloatingss [fls] = return ([], fls)
+joinFloatingss (fls : flss) = do
+  (flsC, flsR) <- joinFloatingss flss
+  (flsC', flsR') <- joinFloatings fls flsR
+  (flsCC, flsC'') <- joinFloatings flsC' flsC
+  let prt i = show . (P.text ("XXX" ++ shows i " ") P.<+>) . P.nest 5
+  trace
+         (unlines $ zipWith prt [1..]
+          [P.pretty flsC'
+          ,P.pretty flsC
+          ,P.pretty flsC''
+          ,P.pretty flsCC
+          ])
+          $ return (flsC'', flsR')
 
 floatingsFromPLets :: [Var] -> [T.PLet] -> U TCM [Floating]
 floatingsFromPLets vs [] = return []
@@ -236,10 +233,36 @@ floatPatterns0 doCrossCallFloat vs t = do
   return r
 
 floatPatterns1 :: Bool -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns1 doCrossCallFloat vs (NVTLet v te tb) = do
+      (flse, te') <- floatPatterns0 doCrossCallFloat vs te
+      (flsb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
+      let flsb' = filter (not . (v `elemVarSet`) . flFreeVars) flsb
+      (fls, fls') <- joinFloatings flse flsb'
+      let t' = foldr applyFloating (NVTLet v te' tb') fls
+      case splitFloating t' of
+        Nothing -> __IMPOSSIBLE__
+        Just (fl, t'') -> do
+          m <- insertFloating fl fls'
+          case m of
+            (Nothing, fls'')  -> return (fls' ++ [fl], t')
+            (Just (cfl, (r1, _)), fls'')
+              -> return (fls'', t') -- applyFloating cfl $ renameNVTTerm r1 t'')
+{-
+          (_, fls'') <- joinFloatings fls' [fl]
+          return (fls'', t') -- no renaming...
+-}
+{-
+          m <- insertFloating fl fls'
+          case m of
+            (Nothing, fls'')  -> return (fls'', applyFloating fl t'')
+            (Just (cfl, (r1, _)), fls'')
+              -> return (fls'', applyFloating cfl $ renameNVTTerm r1 t'')
+-}
 floatPatterns1 doCrossCallFloat vs t = case splitFloating t of
   Just (fl, t') -> let vs' = flRevBoundVars fl ++ vs in do
     (fls, t'') <- floatPatterns0 doCrossCallFloat vs' t'
-    return $ case insertFloating fl fls of
+    m <- insertFloating fl fls
+    return $ case m of
       (Nothing, fls')             -> (fls', applyFloating fl t'')
       (Just (cfl, (r1, _)), fls') -> (fls', applyFloating cfl $ renameNVTTerm r1 t'')
       -- the renaming may not make a difference.
@@ -275,7 +298,7 @@ floatPatterns1 doCrossCallFloat vs t = case splitFloating t of
     NVTApp tf tas -> do
       (flsf, tf') <- floatPatterns0 doCrossCallFloat vs tf
       (flsas, tas') <- unzip <$> mapM (floatPatterns0 doCrossCallFloat vs) tas
-      let (flsC, flsR) = joinFloatingss $ flsf : flsas
+      (flsC, flsR) <- joinFloatingss $ flsf : flsas
       return (flsR, foldr applyFloating (NVTApp tf' tas') flsC)
     NVTLam v tb -> do
       (fls, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
@@ -283,19 +306,19 @@ floatPatterns1 doCrossCallFloat vs t = case splitFloating t of
     NVTLit _ -> return ([], t)
     NVTCon _ -> return ([], t)
     NVTLet v te tb -> do
+      (flse, te') <- floatPatterns0 doCrossCallFloat vs te
       (flsb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
       let flsb' = filter (not . (v `elemVarSet`) . flFreeVars) flsb
-      (flse, te') <- floatPatterns0 doCrossCallFloat vs te
-      case joinFloatings flse flsb' of
-          (fls, fls') -> return (fls', foldr applyFloating (NVTLet v te' tb') fls)
+      (fls, fls') <- joinFloatings flse flsb'
+      return (fls', foldr applyFloating (NVTLet v te' tb') fls)
     NVTCase i ct dft alts -> do
       (flsdft, dft') <- floatPatterns0 doCrossCallFloat vs dft
       (pairs, alts') <- unzip <$> mapM (h vs) alts
-      case unzip pairs of
-        (flsCs, flsRs) -> case joinFloatingss flsRs of
-          (flsC, flsR) -> case joinFloatingss (flsC : flsCs) of
-            (_, flsC') -> let tcore = NVTCase i ct dft' alts'
-              in return (flsR, foldr applyFloating tcore flsC')
+      let (flsCs, flsRs) = unzip pairs
+      (flsC, flsR) <- joinFloatingss flsRs
+      (_, flsC') <- joinFloatingss (flsC : flsCs)
+      let tcore = NVTCase i ct dft' alts'
+      return (flsR, foldr applyFloating tcore flsC')
     NVTUnit -> return ([], t)
     NVTSort -> return ([], t)
     NVTErased -> return ([], t)
@@ -309,7 +332,8 @@ floatPatterns1 doCrossCallFloat vs t = case splitFloating t of
     h vs (NVTAGuard g b) = do
       (flsg, g') <- floatPatterns0 doCrossCallFloat vs g
       (flsb, b') <- floatPatterns0 doCrossCallFloat vs b
-      return (joinFloatings flsg flsb, NVTAGuard g' b')
+      flsPair <- joinFloatings flsg flsb
+      return (flsPair, NVTAGuard g' b')
     h vs (NVTALit lit b) = do
       (flsb, b') <- floatPatterns0 doCrossCallFloat vs b
       return (([], flsb), NVTALit lit b')

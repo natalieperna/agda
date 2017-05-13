@@ -90,11 +90,10 @@ getRenaming (u : us) = do
 fromTTerm :: Monad m => [Var] -> TTerm -> U m NVTTerm
 fromTTerm vs (TVar k) = return $ NVTVar (vs !! k)
 fromTTerm vs (TPrim p) = return $ NVTPrim p
-fromTTerm vs (TDef var name) = return $ NVTDef var' name
-  where
-    var' = case var of
-      TDefDefault -> NVTDefDefault
-      TDefAbstractPLet is -> NVTDefAbstractPLet $ map (vs !!) is
+fromTTerm vs (TDef TDefDefault name) = return $ NVTDef NVTDefDefault name
+fromTTerm vs (TDef (TDefAbstractPLet i) name) = do
+  var' <- NVTDefAbstractPLet <$> getVars i -- map (vs !!) is
+  return $ NVTDef var' name
 fromTTerm vs (TApp f ts) = NVTApp <$> fromTTerm vs f <*> mapM (fromTTerm vs) ts
 fromTTerm vs (TLam b) = do
   v <- getVar
@@ -135,7 +134,7 @@ toTTerm vs (NVTDef var name) = TDef var' name
   where
     var' = case var of
       NVTDefDefault -> TDefDefault
-      NVTDefAbstractPLet us -> TDefAbstractPLet $ map (fromVar __IMPOSSIBLE__ vs) us
+      NVTDefAbstractPLet us -> TDefAbstractPLet $ length us -- map (fromVar __IMPOSSIBLE__ vs) us
 toTTerm vs (NVTApp f ts) = TApp (toTTerm vs f) (map (toTTerm vs) ts)
 toTTerm vs (NVTLam v b) = TLam $ toTTerm (v : vs) b
 toTTerm vs (NVTLit lit) = TLit lit
@@ -156,12 +155,59 @@ toTAlt vs (NVTACon name cvars b) =
 toTAlt vs (NVTAGuard g b) = TAGuard (toTTerm vs g) (toTTerm vs b)
 toTAlt vs (NVTALit lit b) = TALit lit (toTTerm vs b)
 
+copyVar :: Monad m => Var -> StateT NVRename (U m) Var -- for binders
+copyVar v = do
+  v' <- lift getVar
+  modify $ insertNVRename v v'
+  return v'
+
+renameVarS :: Monad m => Var -> StateT NVRename (U m) Var -- only lookup
+renameVarS v = do
+    r <- get
+    return $ renameVar r v
+
+copyNVTTerm :: Monad m => NVTTerm -> StateT NVRename (U m) NVTTerm
+copyNVTTerm t = case t of
+  NVTVar v -> NVTVar <$> renameVarS v
+  NVTPrim p -> return t
+  NVTDef variant name -> do
+    variant' <- case variant of
+      NVTDefDefault -> return variant
+      NVTDefAbstractPLet us -> NVTDefAbstractPLet <$> mapM copyVar us
+    return $ NVTDef variant' name
+  NVTApp f ts -> (NVTApp <$> copyNVTTerm f) <*> mapM copyNVTTerm ts
+  NVTLam v b -> do
+    v' <- copyVar v
+    NVTLam v' <$> copyNVTTerm b
+  NVTLit lit -> return t
+  NVTCon c -> return t
+  NVTLet v e b -> do
+    e' <- copyNVTTerm e -- conceptually needs to be first!
+      -- (actually should not make a difference, due to uniqueness of binders)
+    v' <- copyVar v
+    NVTLet v' e' <$> copyNVTTerm b
+  NVTCase v caseType dft alts -> do
+    v' <- renameVarS v
+    dft' <- copyNVTTerm dft
+    NVTCase v' caseType dft' <$> mapM copyNVTAlt alts
+  NVTUnit -> return t
+  NVTSort -> return t
+  NVTErased -> return t
+  NVTError _ -> return t
+
+copyNVTAlt :: Monad m => NVTAlt -> StateT NVRename (U m) NVTAlt
+copyNVTAlt (NVTACon name cvars b) = do
+  cvars' <- mapM copyVar cvars
+  NVTACon name cvars' <$> copyNVTTerm b
+copyNVTAlt (NVTAGuard g b) = (NVTAGuard <$> copyNVTTerm g) <*> copyNVTTerm b
+copyNVTAlt (NVTALit lit b) = NVTALit lit <$> copyNVTTerm b
+
 
 fvarsNVTTerm :: NVTTerm -> VarSet
 fvarsNVTTerm (NVTVar v) = singletonVarSet v
 fvarsNVTTerm (NVTPrim p) = emptyVarSet
 fvarsNVTTerm (NVTDef NVTDefDefault name) = emptyVarSet
-fvarsNVTTerm (NVTDef (NVTDefAbstractPLet vs) name) = listToVarSet vs
+fvarsNVTTerm (NVTDef (NVTDefAbstractPLet vs) name) = emptyVarSet -- listToVarSet vs
 fvarsNVTTerm (NVTApp f ts) = unionsVarSet $ fvarsNVTTerm f : map fvarsNVTTerm ts
 fvarsNVTTerm (NVTLam v b) = deleteVarSet v $ fvarsNVTTerm b
 fvarsNVTTerm (NVTLit lit) = emptyVarSet
@@ -209,6 +255,9 @@ insertNVRename :: Var -> Var -> NVRename -> NVRename
 insertNVRename (V i) v@(V j) r@(NVRename m)
   = if i == j then r else NVRename $ IntMap.insert i v m
 
+lookupNVRename :: Var -> NVRename -> Maybe Var
+lookupNVRename (V i) (NVRename m) = IntMap.lookup i m
+
 zipInsertNVRename :: [Var] -> [Var] -> NVRename -> NVRename
 zipInsertNVRename us vs r = foldr ($) r $ zipWith insertNVRename us vs
 
@@ -239,8 +288,8 @@ renameNVTTerm r0@(NVRename m) t0
     renTTerm r (NVTVar v) = NVTVar $ renameVar r v
     renTTerm r t@(NVTPrim _) = t
     renTTerm r t@(NVTDef NVTDefDefault _) = t
-    renTTerm r (NVTDef (NVTDefAbstractPLet vs) name)
-      = NVTDef (NVTDefAbstractPLet $ map (renameVar r) vs) name
+    renTTerm r t@(NVTDef (NVTDefAbstractPLet vs) name) = t
+      -- = NVTDef (NVTDefAbstractPLet $ map (renameVar r) vs) name
     renTTerm r (NVTApp f ts) = NVTApp (renTTerm r f) (map (renTTerm r) ts)
     renTTerm r t@(NVTLam v b) = let
         r'@(NVRename m') = deleteNVRename v r
@@ -384,23 +433,80 @@ unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2)) = case p2 of
       Just (cp', (r1', r2')) -> Just (NVPAsCon v2 cp'
                                      , (insertNVRename v1 v2 r1', r2'))
 
-unifyNVPat0Old :: NVPat -> NVPat -> PU -> Maybe (NVPat, PU)
-unifyNVPat0Old p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2))
-   | v1@(V i1) <- getNVPatVar p1
-   , v2@(V i2) <- getNVPatVar p2
-  = case IntMap.lookup i1 m1 of
-  Just v2' ->    if v2 == v2'  then Just (p2, pu)
-                               else Nothing -- renamings have to be injective
-  Nothing -> case IntMap.lookup i2 m2 of
-    Just v1' ->  if v1 == v1'  then Just (p1, pu)
-                               else Nothing
-    Nothing -> case p2 of
-      NVPVar _v2 -> Just (p1, (r1, insertNVRename v2 v1 r2))
-      NVPAsCon _v2 cp2 -> case p1 of
-        NVPVar _v1 -> Just (p2, (insertNVRename v1 v2 r1, r2))
-        NVPAsCon _v1 cp1 -> case unifyNVConPat0 cp1 cp2 pu of
-          Nothing -> Nothing
-          Just (cp', pu') -> Just (NVPAsCon v1 cp', pu')
+copyNVConPat :: Monad m => NVConPat -> StateT NVRename (U m) NVConPat
+copyNVConPat (NVConPat ct dft c pats) = do
+  dft' <- copyNVTTerm dft
+  NVConPat ct dft' c <$> mapM copyNVPat pats
+
+copyNVPat :: Monad m => NVPat -> StateT NVRename (U m) NVPat
+copyNVPat (NVPVar v) = NVPVar <$> copyVar v
+copyNVPat (NVPAsCon v cp) = do
+  v' <- copyVar v
+  NVPAsCon v' <$> copyNVConPat cp
+
+onPU1, onPU2 :: Monad m => StateT NVRename (U m) a -> StateT PU (U m) a
+onPU1 m = do
+  (r1, r2) <- get
+  (a, r1') <- lift $ runStateT m r1
+  put (r1', r2)
+  return a
+onPU2 m = do
+  (r1, r2) <- get
+  (a, r2') <- lift $ runStateT m r2
+  put (r1, r2')
+  return a
+
+unifyVarU :: Monad m => Var -> Var -> StateT PU (U m) Var
+unifyVarU v1 v2 = do
+  (r1, r2) <- get
+  v3 <- lift getVar
+  let r1' = insertNVRename v1 v3 r1
+      r2' = insertNVRename v2 v3 r2
+  put (r1', r2')
+  return v3
+
+-- All default expressions in |NVConPat|s will be |harmless|,
+-- and therefore needno explicit copying.
+
+-- | ``harmless'' in the sense of negligible as default expression in |TCase|:
+harmless :: NVTTerm -> Bool
+harmless (NVTError _)  = True
+harmless NVTUnit       = True
+harmless NVTErased     = True
+harmless NVTSort       = True
+harmless _             = False
+
+-- Creating a pushout with all new binders:
+unifyNVPatU :: Monad m => NVPat -> NVPat -> StateT PU (U m) (Maybe NVPat)
+unifyNVPatU p1 p2
+  = let
+   v1 = getNVPatVar p1
+   v2 = getNVPatVar p2
+  in do
+  v3 <- unifyVarU v1 v2
+  case p1 of
+    NVPVar _v1 -> case p2 of
+      NVPVar _v2       -> return . Just $ NVPVar v3
+      NVPAsCon _v2 cp2 -> Just . NVPAsCon v3 <$> onPU2 (copyNVConPat cp2)
+    NVPAsCon _v1 cp1 -> fmap (NVPAsCon v3) <$> case p2 of
+      NVPVar _v2       -> Just <$> onPU1 (copyNVConPat cp1)
+      NVPAsCon _v2 cp2 -> unifyNVConPatU cp1 cp2
+
+unifyNVPatsU :: Monad m => [NVPat] -> [NVPat] -> StateT PU (U m) (Maybe [NVPat])
+unifyNVPatsU [] [] = return $ Just []
+unifyNVPatsU (p1 : ps1) (p2 : ps2) = do
+  mp3 <- unifyNVPatU p1 p2
+  case mp3 of
+    Nothing -> return Nothing
+    Just p3 -> fmap (p3 :) <$> unifyNVPatsU ps1 ps2
+unifyNVPatsU _ _ = return Nothing
+
+unifyNVConPatU :: Monad m
+               => NVConPat -> NVConPat -> StateT PU (U m) (Maybe NVConPat)
+unifyNVConPatU (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2)
+  = if c1 /= c2
+    then return Nothing
+    else fmap (NVConPat ct1 dft1 c1) <$> unifyNVPatsU ps1 ps2
 
 unifyNVConPat :: NVConPat -> NVConPat -> Maybe (NVConPat, PU)
 unifyNVConPat cp1 cp2 = unifyNVConPat0 cp1 cp2 emptyPU
@@ -469,16 +575,16 @@ matchNVPat :: NVPat -> NVPat -> Maybe NVRename
 matchNVPat p1 p2 = matchNVPat0 p1 p2 emptyNVRename
 
 matchNVPat0 :: NVPat -> NVPat -> NVRename -> Maybe NVRename
-matchNVPat0 p1 p2 r@(NVRename m)
-   | v1@(V i1) <- getNVPatVar p1
-   , v2@(V i2) <- getNVPatVar p2
-  = case IntMap.lookup i1 m of
+matchNVPat0 p1 p2 r
+   | v1 <- getNVPatVar p1
+   , v2 <- getNVPatVar p2
+  = case lookupNVRename v1 r of
   Just v2' ->    if v2 == v2'  then Just r
                                else Nothing -- clash
   Nothing -> case p1 of
     NVPVar _v1 -> Just $ insertNVRename v1 v2 r
-    NVPAsCon _v1 (NVConPat ct1 dft1 c1 ps1) -> case p2 of
-      NVPVar _v2 -> Nothing -- \edcomm{WK}{CHeck this again later!}
+    NVPAsCon _v1 (NVConPat ct1 dft1 c1 ps1) -> insertNVRename v1 v2 <$> case p2 of
+      NVPVar _v2 -> Nothing
       NVPAsCon _v2 (NVConPat ct2 dft2 c2 ps2) -> if c1 /= c2
         then Nothing
         else matchNVPats ps1 ps2 r
@@ -549,7 +655,7 @@ renameFloating :: NVRename -> Floating -> Floating
 renameFloating r fl@(FloatingPLet {}) = mkFloatingPLet pat' rhs'
   where
    pat' = renameNVPat r $ pletPat fl
-   rhs' = {- renameNVTTerm r $ -} pletRHS fl
+   rhs' =  renameNVTTerm r $ pletRHS fl
 renameFloating r fl@(FloatingCase {}) = FloatingCase
   {fcaseScrutinee = renameVar r $ fcaseScrutinee fl
   ,fcasePat = renameNVConPat r $ fcasePat fl

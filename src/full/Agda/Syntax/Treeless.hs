@@ -197,7 +197,7 @@ instance KillRange Compiled where
 -- ``Flavour'' of @TDef@
 data TDefVariant
   = TDefDefault             -- traditional variants: "du*" or "d*"
-  | TDefAbstractPLet [Nat]  -- additional variable arguments for "dv*" variant.
+  | TDefAbstractPLet Nat    -- number of additional variable arguments for "dv*" variant.
   deriving (Typeable, Eq, Ord, Show)
 
 -- a TTerm prefix that can be translated into a pattern let binding,

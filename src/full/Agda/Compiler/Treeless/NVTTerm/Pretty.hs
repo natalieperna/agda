@@ -153,7 +153,7 @@ pAlt (NVTAGuard g b) =
               <*> (pTerm' 0 b)
 pAlt (NVTACon c cvars b) =
         -- withNames (length cvars) $ \ xs ->
-        pAlt' <$> pTerm' 0 (NVTApp (NVTCon c) [NVTVar i | i <- reverse cvars])
+        pAlt' <$> pTerm' 0 (NVTApp (NVTCon c) $ map NVTVar cvars)
               <*> pTerm' 0 b
 
 pAlt' :: Doc -> Doc -> Doc

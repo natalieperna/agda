@@ -576,13 +576,15 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
     let given   = length ts
         needed  = length used
         missing = drop given used
-        (prefix, us) = case variant of
-          T.TDefDefault -> (duPrefix, [])
-          T.TDefAbstractPLet vs -> (dvPrefix, map T.TVar vs)
+    (prefix, us) <- case variant of
+          T.TDefDefault | and used -> return (dPrefix, [])
+          T.TDefDefault            -> return (duPrefix, [])
+          T.TDefAbstractPLet k -> do
+            intros k $ \ ns -> return (dvPrefix, map (HS.Var . HS.UnQual) ns)
     if not isCompiled && any not used
       then if any not missing then term (etaExpand (needed - given) tm0) else do
         f <- lift $ HS.Var <$> xhqn prefix f  -- used stripped function
-        f `apps` ([ t | (t, True) <- zip ts $ used ++ repeat True ] ++ us)
+        flip (foldl HS.App) us <$> (f `apps` [ t | (t, True) <- zip ts $ used ++ repeat True ])
       else do
         t' <- term (T.TDef variant f)
         t' `apps` ts

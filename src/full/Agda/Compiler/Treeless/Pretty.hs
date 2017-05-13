@@ -100,8 +100,8 @@ pTerm t = case t of
               <*> pTerm c
   TDef var f -> text . shows f <$> case var of
     TDefDefault -> return ""
-    TDefAbstractPLet is -> do
-      vs <- mapM name is
+    TDefAbstractPLet i -> do
+      vs <- mapM name [0 .. pred i] -- is
       return $ ".dv[ " ++ unwords (vs ++ ["]"])
   TCon c -> pure $ text (show c)
   TLit l -> pure $ pretty l
