@@ -244,6 +244,9 @@ floatFloatings :: Bool -> [Var] -> [Floating] -> U TCM [Floating]
 floatFloatings doCrossCallFloat vs fls = snd <$>
   (joinFloatingss =<< mapM (floatFloating doCrossCallFloat vs) fls)  -- \edcomm{WK}{|vs|?}
 
+-- |NVTTLet| needs to be treated separately,
+-- since currently evey occurrence would be taken over by |splitFloating|.
+-- \edcomm{WK}{The same will hold for |NVTCase| once |FloatingCase| is reactivated.}
 floatPatterns1 :: Bool -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
 floatPatterns1 doCrossCallFloat vs (NVTLet v te tb) = do
       (flse, te') <- floatPatterns0 doCrossCallFloat vs te
@@ -320,12 +323,15 @@ floatPatterns1 doCrossCallFloat vs t = case splitFloating t of
       return (filter (not . (v `elemVarSet`) . flFreeVars) fls, NVTLam v tb')
     NVTLit _ -> return ([], t)
     NVTCon _ -> return ([], t)
-    NVTLet v te tb -> do
+    NVTLet v te tb -> __IMPOSSIBLE__ -- taken care of above.
+    {-
+      do
       (flse, te') <- floatPatterns0 doCrossCallFloat vs te
       (flsb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
       let flsb' = filter (not . (v `elemVarSet`) . flFreeVars) flsb
       (fls, fls') <- joinFloatings flse flsb'
       return (fls', foldr applyFloating (NVTLet v te' tb') fls)
+    -}
     NVTCase i ct dft alts -> do
       (flsdft, dft') <- floatPatterns0 doCrossCallFloat vs dft
       (pairs, alts') <- unzip <$> mapM (h vs) alts
