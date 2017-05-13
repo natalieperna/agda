@@ -218,7 +218,7 @@ data TFloating
 -- For one field of @Compiled@, caching the factoring of |cTreeless|
 -- over @PLet@s that can be floated out
 data CrossCallFloat = CrossCallFloat
-   { ccfLambdaLen :: Nat
-   , ccfPLets :: [PLet]
-   , ccfBody :: TTerm
-   } deriving (Typeable, Show, Eq, Ord)
+  { ccfLambdaLen :: Nat
+  , ccfPLets :: [PLet]
+  , ccfBody :: TTerm
+  } deriving (Typeable, Show, Eq, Ord)

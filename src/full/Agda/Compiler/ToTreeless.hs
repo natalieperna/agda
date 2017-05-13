@@ -117,13 +117,21 @@ ccToTreeless q cc = do
     else return body
   doFloatPLet <- optFloatPLet <$> commandLineOptions
   doCrossCallFloat <- optCrossCallFloat <$> commandLineOptions
-  body <- if doFloatPLet
+  (body, cacheCrossCallFloats) <- if doFloatPLet
     then do
-      body' <- floatPatterns doCrossCallFloat q body
+      (mkCCF, body') <- floatPatterns doCrossCallFloat q body
       reportSDoc "treeless.opt.floatplet" (30 + v)
         $ text (shows q " -- after PLet floating") $$ pbody body'
-      return body'
-    else return body
+      return . (,) body' $ \ t -> case mkCCF t of
+        Nothing ->
+          reportSDoc "treeless.opt.abstractPLet" (50 + v)
+            $ text ("No CrossCallFloat for " ++ show q ++ ".")
+        Just ccf -> do
+          reportSDoc "treeless.opt.abstractPLet" (40 + v)
+            $ text ("CrossCallFloat for " ++ show q ++ ":")
+            $$ nest 4 (pretty ccf)
+          setCompiledCrossCallFloat q ccf
+    else return (body, const $ return ())
   body <- simplifyTTerm body -- necessary for squashing after float
   reportSDoc "treeless.opt.simpl" (30 + v)
     $ text (shows q " -- after fourth simplification") $$ pbody body
@@ -136,18 +144,8 @@ ccToTreeless q cc = do
   setTreeless q body
   setCompiledArgUse q used
   doAbstractPLet <- optAbstractPLet <$> commandLineOptions
-  if doAbstractPLet
-    then case extractCrossCallFloat body of
-      Nothing ->         -- return ()
-        reportSDoc "treeless.opt.abstractPLet" (40 + v) $
-          text (shows q ": AbstractPLet: No PLet found:") <+> pbody body
-      Just ccf -> do
-        setCompiledCrossCallFloat q ccf
-        reportSDoc "treeless.opt.abstractPLet" (30 + v) $
-          text (shows q ": ccfLambdaLen = " ++ show (C.ccfLambdaLen ccf))
-          <+> text ("; length ccfPLets = " ++ show (length $ C.ccfPLets ccf))
-        reportSDoc "treeless.opt.abstractPLet" (40 + v) $
-          vcat (map (text . ("**  " ++) . show) (C.ccfPLets ccf)                      ++ [pbody' "* [inside plets]" (C.ccfBody ccf)])
+  if doAbstractPLet || doCrossCallFloat
+    then cacheCrossCallFloats body
     else return ()
   return body
 
