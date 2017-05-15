@@ -33,10 +33,12 @@ import Agda.Syntax.NVTTerm
 import Agda.TypeChecking.Substitute
 import Agda.Compiler.Treeless.Subst
 import Agda.Compiler.Treeless.Compare
-import Agda.Compiler.Treeless.NVTTerm.Pretty
+import Agda.Compiler.Treeless.Pretty ()
+import Agda.Compiler.Treeless.NVTTerm.Pretty ()
 
 -- import Agda.Utils.Permutation
 import qualified Agda.Utils.Pretty as P
+import Agda.Utils.List ( (!!!) )
 
 import Data.Word (Word64)
 
@@ -45,6 +47,24 @@ import Agda.Utils.Impossible
 
 import Debug.Trace
 
+mkNVTLet :: Var -> NVTTerm -> NVTTerm -> NVTTerm
+mkNVTLet v e b = maybe b id $ mkNVTLetM v e b
+
+mkNVTLetM :: Var -> NVTTerm -> NVTTerm -> Maybe NVTTerm
+mkNVTLetM v (NVTVar u) b = Just $ renameNVTTerm (singletonNVRename v u) b
+mkNVTLetM v e b = if v `elemVarSet` fvarsNVTTerm b
+  then Just $ NVTLet v e b
+  else Nothing
+
+splitVars :: [NVTTerm] -> ([Var], [NVTTerm])
+splitVars = h id
+  where
+    h acc [] = (acc [], [])
+    h acc (t : ts')
+      | NVTVar v <- t  =  h (acc . (v :)) ts'
+    h acc ts = (acc [], ts)
+
+
 emptyVarSet :: VarSet
 emptyVarSet = VarSet IntSet.empty
 singletonVarSet :: Var -> VarSet
@@ -52,7 +72,9 @@ singletonVarSet (V i) = VarSet $ IntSet.singleton i
 insertVarSet :: Var -> VarSet -> VarSet
 insertVarSet (V i) (VarSet s) = VarSet $ IntSet.insert i s
 deleteVarSet :: Var -> VarSet -> VarSet
-deleteVarSet (V i) (VarSet s) = VarSet $ IntSet.delete  i s
+deleteVarSet (V i) (VarSet s) = VarSet $ IntSet.delete i s
+differenceVarSet :: VarSet -> VarSet -> VarSet
+differenceVarSet (VarSet s1) (VarSet s2) = VarSet $ IntSet.difference s1 s2
 nullVarSet :: VarSet -> Bool
 nullVarSet (VarSet s) = IntSet.null s
 elemVarSet :: Var -> VarSet -> Bool
@@ -88,37 +110,79 @@ getRenaming (u : us) = do
   ((u,v) :) <$> getRenaming us
 
 fromTTerm :: Monad m => [Var] -> TTerm -> U m NVTTerm
-fromTTerm vs (TVar k) = return $ NVTVar (vs !! k)
-fromTTerm vs (TPrim p) = return $ NVTPrim p
-fromTTerm vs (TDef TDefDefault name) = return $ NVTDef NVTDefDefault name
-fromTTerm vs (TDef (TDefAbstractPLet i) name) = do
-  var' <- NVTDefAbstractPLet <$> getVars i -- map (vs !!) is
-  return $ NVTDef var' name
-fromTTerm vs (TApp f ts) = NVTApp <$> fromTTerm vs f <*> mapM (fromTTerm vs) ts
-fromTTerm vs (TLam b) = do
-  v <- getVar
-  NVTLam v <$> fromTTerm (v : vs) b
-fromTTerm vs (TLit lit) = return $ NVTLit lit
-fromTTerm vs (TCon c) = return $ NVTCon c
-fromTTerm vs (TLet e b) = do
-  e' <- fromTTerm vs e
-  v <- getVar
-  NVTLet v e' <$> fromTTerm (v : vs) b
-fromTTerm vs (TCase k caseType dft alts) = NVTCase (vs !! k) caseType
-  <$> fromTTerm vs dft
-  <*> mapM (fromTAlt vs) alts
-fromTTerm vs TUnit = return NVTUnit
-fromTTerm vs TSort = return NVTSort
-fromTTerm vs TErased = return NVTErased
-fromTTerm vs (TError t) = return $ NVTError t
+fromTTerm vs t = fst <$> fromTTerm0 True vs t
 
-fromTAlt :: Monad m => [Var] -> TAlt -> U m NVTAlt
-fromTAlt vs (TACon name arity b) = do
-  cvars <- getVars arity
-  b' <- fromTTerm (reverse cvars ++ vs) b
-  return $ NVTACon name cvars b'
-fromTAlt vs (TAGuard g b) = NVTAGuard <$> fromTTerm vs g <*> fromTTerm vs b
-fromTAlt vs (TALit lit b) = NVTALit lit <$> fromTTerm vs b
+-- |fromTTerm0| also returns the set of free variables in the generated term,
+-- and omits |let|s for variables that do not occur.
+-- If |letOpt = True|, trivial |let|s are not generated ---
+-- therefore |letOpt| must be false for |PLet| conversion
+-- (in |floatingsFromPLets|).
+fromTTerm0 :: Monad m => Bool -> [Var] -> TTerm -> U m (NVTTerm, VarSet)
+fromTTerm0 letOpt vs0 t0 = fromT vs0 t0 where
+  fromT vs t = case t of
+    TVar k -> case vs !!! k of
+      Just v -> return $ (NVTVar v, singletonVarSet v)
+      Nothing -> trace (show (P.text "fromTTerm: variable out of range!"
+                  P.$$ P.nest 4 (P.text ("vs = " ++ show vs)
+                        P.$$ P.text ("k = " ++ show k)
+                        P.$$ P.text ("letOpt = " ++ show letOpt)
+                        P.$$ P.text ("vs0 = " ++ show vs0)
+                        P.$$ (P.text "t0 = " P.<+> P.nest 4 (P.pretty t0)))))
+                 __IMPOSSIBLE__
+    TPrim p -> return (NVTPrim p, emptyVarSet)
+    TDef TDefDefault name -> return (NVTDef NVTDefDefault name, emptyVarSet)
+    TDef (TDefAbstractPLet i) name -> do
+      var' <- NVTDefAbstractPLet <$> getVars i -- map (vs !!) is
+      return (NVTDef var' name, emptyVarSet)
+    TApp f as -> do
+      (f', vsF) <- fromT vs f
+      (as', vssAs) <- unzip <$> mapM (fromT vs) as
+      return (NVTApp f' as', unionsVarSet (vsF : vssAs))
+    TLam b -> do
+      v <- getVar
+      (b', vsB) <- fromT (v : vs) b
+      return (NVTLam v b', deleteVarSet v vsB)
+    TLit lit -> return (NVTLit lit, emptyVarSet)
+    TCon c -> return (NVTCon c, emptyVarSet)
+    TLet e b -> do
+      (e', vsE) <- fromT vs e
+      case e' of
+        NVTVar u | letOpt -> fromT (u : vs) b
+        _ -> do
+          v <- getVar
+          pB@(b', vsB) <- fromT (v : vs) b
+          return $ if letOpt <= v `elemVarSet` vsB
+            then (NVTLet v e' b', vsE `unionVarSet` deleteVarSet v vsB)
+            else pB
+    TCase k caseType dft alts -> case vs !!! k of
+      Just v -> do
+        (dft', vsDft) <- fromT vs dft
+        (alts', vssAlts) <- unzip <$> mapM (fromTAlt vs) alts
+        return ( NVTCase v caseType dft' alts'
+               , insertVarSet v . unionsVarSet $ vsDft : vssAlts
+               )
+      Nothing -> trace (show (P.text "fromTTerm: case scrutinee out of range!"
+                  P.$$ P.nest 4 (P.text ("vs = " ++ show vs)
+                        P.$$ P.text ("k = " ++ show k)
+                        P.$$ P.text ("letOpt = " ++ show letOpt)
+                        P.$$P.text ("vs0 = " ++ show vs0)
+                        P.$$  (P.text "t0 = " P.<+> P.nest 4 (P.pretty t)))))
+                  __IMPOSSIBLE__
+    TUnit -> return (NVTUnit, emptyVarSet)
+    TSort -> return (NVTSort, emptyVarSet)
+    TErased -> return (NVTErased, emptyVarSet)
+    TError t -> return (NVTError t, emptyVarSet)
+
+  fromTAlt :: Monad m => [Var] -> TAlt -> U m (NVTAlt, VarSet)
+  fromTAlt vs (TACon name arity b) = do
+    cvars <- getVars arity
+    (b', vsB) <- fromT (reverse cvars ++ vs) b
+    return (NVTACon name cvars b', foldr deleteVarSet vsB cvars)
+  fromTAlt vs (TAGuard g b) = do
+    (g', vsG) <- fromT vs g
+    (b', vsB) <- fromT vs b
+    return (NVTAGuard g' b', unionVarSet vsG vsB)
+  fromTAlt vs (TALit lit b) = first (NVTALit lit) <$> fromT vs b
 
 toTTerm' :: NVTTerm -> TTerm
 toTTerm' = toTTerm []
@@ -127,33 +191,36 @@ fromVar :: Nat -> [Var] -> Var -> Nat -- first argument is __IMPOSSIBLE__
 fromVar err vs v = maybe (tr err) id $ elemIndex v vs
   where  tr = trace $ "fromVar " ++ shows vs (' ' : show v)
 
-toTTerm :: [Var] -> NVTTerm -> TTerm
-toTTerm vs (NVTVar v) = TVar (fromVar __IMPOSSIBLE__ vs v)
-toTTerm vs (NVTPrim p) = TPrim p
-toTTerm vs (NVTDef var name) = TDef var' name
-  where
-    var' = case var of
-      NVTDefDefault -> TDefDefault
-      NVTDefAbstractPLet us -> TDefAbstractPLet $ length us -- map (fromVar __IMPOSSIBLE__ vs) us
-toTTerm vs (NVTApp f ts) = TApp (toTTerm vs f) (map (toTTerm vs) ts)
-toTTerm vs (NVTLam v b) = TLam $ toTTerm (v : vs) b
-toTTerm vs (NVTLit lit) = TLit lit
-toTTerm vs (NVTCon c) = TCon c
-toTTerm vs (NVTLet v e b) = TLet (toTTerm vs e) (toTTerm (v : vs) b)
-toTTerm vs (NVTCase v caseType dft alts) =
-  TCase (maybe __IMPOSSIBLE__ id $ elemIndex v vs) caseType (toTTerm vs dft)
-    $ map (toTAlt vs) alts
-toTTerm vs NVTUnit = TUnit
-toTTerm vs NVTSort = TSort
-toTTerm vs NVTErased = TErased
-toTTerm vs (NVTError t) = TError t
+toTTerm, toTTerm0 :: [Var] -> NVTTerm -> TTerm
+toTTerm vs t = trace ("toTTerm " ++ shows vs (' ' : P.prettyShow t)) $
+               toTTerm0 vs t
+toTTerm0 vs t = case t of
+  NVTVar v -> TVar (fromVar __IMPOSSIBLE__ vs v)
+  NVTPrim p -> TPrim p
+  NVTDef var name -> TDef var' name
+    where
+      var' = case var of
+        NVTDefDefault -> TDefDefault
+        NVTDefAbstractPLet us -> TDefAbstractPLet $ length us -- map (fromVar __IMPOSSIBLE__ vs) us
+  NVTApp f ts -> TApp (toTTerm0 vs f) (map (toTTerm0 vs) ts)
+  NVTLam v b -> TLam $ toTTerm0 (v : vs) b
+  NVTLit lit -> TLit lit
+  NVTCon c -> TCon c
+  NVTLet v e b -> TLet (toTTerm0 vs e) (toTTerm0 (v : vs) b)
+  NVTCase v caseType dft alts ->
+    TCase (fromVar __IMPOSSIBLE__ vs v) caseType (toTTerm0 vs dft)
+      $ map (toTAlt vs) alts
+  NVTUnit -> TUnit
+  NVTSort -> TSort
+  NVTErased -> TErased
+  NVTError t -> TError t
 
 
 toTAlt :: [Var] -> NVTAlt -> TAlt
 toTAlt vs (NVTACon name cvars b) =
-  TACon name (length cvars) $ toTTerm (reverse cvars ++ vs) b
-toTAlt vs (NVTAGuard g b) = TAGuard (toTTerm vs g) (toTTerm vs b)
-toTAlt vs (NVTALit lit b) = TALit lit (toTTerm vs b)
+  TACon name (length cvars) $ toTTerm0 (reverse cvars ++ vs) b
+toTAlt vs (NVTAGuard g b) = TAGuard (toTTerm0 vs g) (toTTerm0 vs b)
+toTAlt vs (NVTALit lit b) = TALit lit (toTTerm0 vs b)
 
 copyVar :: Monad m => Var -> StateT NVRename (U m) Var -- for binders
 copyVar v = do
@@ -661,13 +728,23 @@ renameFloating r fl@(FloatingCase {}) = FloatingCase
   ,fcasePat = renameNVConPat r $ fcasePat fl
   }
 
+-- to rename only the free variables in a |Floating|:
+renameFloatingFVars :: NVRename -> Floating -> Floating
+renameFloatingFVars r fl@(FloatingPLet {}) = mkFloatingPLet pat rhs'
+  where
+   pat = pletPat fl
+   rhs' = renameNVTTerm r $ pletRHS fl
+renameFloatingFVars r fl@(FloatingCase {}) = fl
+  {fcaseScrutinee = renameVar r $ fcaseScrutinee fl
+  }
+
 matchFloating :: Floating -> Floating -> Maybe NVRename
 matchFloating fl1@(FloatingPLet {pletPat = pat1, pletRHS = rhs1})
               fl2@(FloatingPLet {pletPat = pat2, pletRHS = rhs2})
   = if let b = rhs1 == rhs2
-       in trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 rhs1  P.$$ P.text " |=> " P.<+> P.prettyPrec 10 rhs2  P.<+> P.text " --> " P.$$ P.pretty b) b
+       in {- trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 rhs1  P.$$ P.text " |=> " P.<+> P.prettyPrec 10 rhs2  P.<+> P.text " --> " P.$$ P.pretty b) -} b
   then let m = matchNVPat pat1 pat2
-       in trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 pat1 P.$$ P.text " |=> " P.<+> P.prettyPrec 10 pat2  P.<+> P.text " --> " P.$$ P.pretty m) m
+       in {- trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 pat1 P.$$ P.text " |=> " P.<+> P.prettyPrec 10 pat2  P.<+> P.text " --> " P.$$ P.pretty m) -} m
   else Nothing
 matchFloating fl1@(FloatingCase v1 cp1) fl2@(FloatingCase v2 cp2)
   = if v1 == v2

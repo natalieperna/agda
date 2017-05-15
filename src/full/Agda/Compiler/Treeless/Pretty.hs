@@ -170,4 +170,6 @@ pCCF :: CrossCallFloat -> P Doc
 pCCF ccf = do
   plets <- mapM pPLet $ ccfPLets ccf
   rhs <- pTerm $ ccfBody ccf
-  return $ text "PLETS" <+> nest 6 (vcat plets) $$ text "BODY" <+> nest 6 rhs
+  return $ text ("CCF: LambdLen = " ++ show (ccfLambdaLen ccf))
+    $$ text "PLETS" <+> nest 6 (vcat plets)
+    $$ text "BODY" <+> nest 6 rhs
