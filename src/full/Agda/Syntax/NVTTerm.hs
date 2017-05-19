@@ -140,9 +140,11 @@ data Floating
     { pletPat :: NVPat
     , pletRHS :: NVTTerm
     , pletFVars :: VarSet -- free variables of pletRHS
+    , flExtraScope :: [Var]
     }
   | FloatingCase
     { fcaseScrutinee :: Var
     , fcasePat :: NVConPat
+    , flExtraScope :: [Var]
     }
    deriving (Show)

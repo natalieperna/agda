@@ -686,15 +686,19 @@ matchNVPats (p1 : ps1) (p2 : ps2) r  =    matchNVPat0 p1 p2 r
 matchNVPats _ _ _ = Nothing
 
 mkFloatingPLet :: NVPat -> NVTTerm -> Floating
-mkFloatingPLet pat rhs = FloatingPLet
-    { pletPat    = pat
-    , pletRHS    = rhs
-    , pletFVars  = fvarsNVTTerm rhs
+mkFloatingPLet pat rhs = mkFloatingPLet' pat rhs []
+
+mkFloatingPLet' :: NVPat -> NVTTerm -> [Var] -> Floating
+mkFloatingPLet' pat rhs vs = FloatingPLet
+    { pletPat      = pat
+    , pletRHS      = rhs
+    , pletFVars    = fvarsNVTTerm rhs
+    , flExtraScope = vs
     }
 
 flFreeVars :: Floating -> VarSet
 flFreeVars plet@(FloatingPLet {}) = pletFVars plet
-flFreeVars (FloatingCase v _) = singletonVarSet v
+flFreeVars fc@(FloatingCase {}) = singletonVarSet $ fcaseScrutinee fc
 
 flBoundVars :: Floating -> [Var]
 flBoundVars (FloatingPLet {pletPat = p}) = patVars p
@@ -719,13 +723,15 @@ renameNVPatTopVar r (NVPVar v) = NVPVar $ renameVar r v
 renameNVPatTopVar r (NVPAsCon v cp) = NVPAsCon (renameVar r v) cp
 
 renameFloating :: NVRename -> Floating -> Floating
-renameFloating r fl@(FloatingPLet {}) = mkFloatingPLet pat' rhs'
+renameFloating r fl@(FloatingPLet {}) = mkFloatingPLet' pat' rhs' vs'
   where
    pat' = renameNVPat r $ pletPat fl
    rhs' =  renameNVTTerm r $ pletRHS fl
+   vs' = map (renameVar r) $ flExtraScope fl
 renameFloating r fl@(FloatingCase {}) = FloatingCase
   {fcaseScrutinee = renameVar r $ fcaseScrutinee fl
   ,fcasePat = renameNVConPat r $ fcasePat fl
+  ,flExtraScope = map (renameVar r) $ flExtraScope fl
   }
 
 -- to rename only the free variables in a |Floating|:
@@ -738,6 +744,10 @@ renameFloatingFVars r fl@(FloatingCase {}) = fl
   {fcaseScrutinee = renameVar r $ fcaseScrutinee fl
   }
 
+addExtraScope :: [Var] -> Floating -> Floating
+addExtraScope vs fl = fl { flExtraScope = vs ++ flExtraScope fl }
+
+-- \edcomm{WK}{Use |flExtraScope|?}
 matchFloating :: Floating -> Floating -> Maybe NVRename
 matchFloating fl1@(FloatingPLet {pletPat = pat1, pletRHS = rhs1})
               fl2@(FloatingPLet {pletPat = pat2, pletRHS = rhs2})
@@ -746,7 +756,8 @@ matchFloating fl1@(FloatingPLet {pletPat = pat1, pletRHS = rhs1})
   then let m = matchNVPat pat1 pat2
        in {- trace (show $ P.text "matchFloating: " P.<+> P.prettyPrec 10 pat1 P.$$ P.text " |=> " P.<+> P.prettyPrec 10 pat2  P.<+> P.text " --> " P.$$ P.pretty m) -} m
   else Nothing
-matchFloating fl1@(FloatingCase v1 cp1) fl2@(FloatingCase v2 cp2)
+matchFloating fl1@(FloatingCase v1 cp1 extraScope1)
+              fl2@(FloatingCase v2 cp2 extraScope2)
   = if v1 == v2
   then matchNVConPat cp1 cp2
   else -- \edcomm{WK}{deepMathching not yet connected here!}

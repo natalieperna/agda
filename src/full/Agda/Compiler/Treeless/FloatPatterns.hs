@@ -56,13 +56,14 @@ attachConPatToFloating v conPat fcase@(FloatingCase {})
       Nothing -> Nothing
       Just pat' -> Just fcase { fcasePat = pat' }
 
+-- \edcomm{WK}{Use |flExtraScope|?}
 applyFloating :: Floating -> NVTTerm -> NVTTerm
 applyFloating plet@(FloatingPLet {pletPat = p}) b {- NVTLet v t1 b) a = -}
     = mkNVTLet v (pletRHS plet)
     $ maybe b (caseNVConPat v `flip` b) (innerNVPat p)
   where
     v = getNVPatVar p
-applyFloating fcase@(FloatingCase v p) b = caseNVConPat v p b
+applyFloating fcase@(FloatingCase v p extraScope) b = caseNVConPat v p b
 
 
 -- If |splitPLet t = Just (fl, t')|, then |applyFloating fl t' = t|.
@@ -84,6 +85,7 @@ splitFloating t = case Nothing {- splitSingleAltCase t -} of
          (FloatingCase
            { fcaseScrutinee = cv
            , fcasePat = conPat
+           , flExtraScope = []
            }
          , b
          )
@@ -262,6 +264,17 @@ joinFloatingss (fls : flss) = do
   --         ])
   return (flsC'', flsR')
 
+-- |NVTDefAbstractPLet vVars| acts as variable binder for |vVars|,
+-- with their scope being the |Floating|s floated out of this call.
+-- These will be added to the scope in |applyFloating|.
+
+-- |floatingsFromPLets| is called twice:
+-- In |floatPatterns0| with |ws = []|;
+--   for every generated |Floating|,
+--   the |flRevBoundVars| in scope for its body
+--   are inserted into |flExtraScope|.
+-- In |squashFloatings| with |ws = vVarsExtra| to apply the resulting renamings.
+-- \edcomm{WK}{It is possible that too much is going on here at the same time.}
 floatingsFromPLets :: [Var] -> [Var] -> NVRename
                    -> [T.PLet] -> U TCM [Floating]
 floatingsFromPLets vs ws r [] = return []
@@ -278,7 +291,8 @@ floatingsFromPLets vs ws r (plet : plets) = do
           r' = zipInsertNVRename ws0 flBvs r
       let vs' = flBvs ++ vs -- \edcomm{WK}{\unfinished}
       fls <- floatingsFromPLets vs' ws' r' plets
-      return $ renameFloatingFVars r' fl : fls
+      return $ renameFloatingFVars r' fl {flExtraScope = flBvs}
+             : map (addExtraScope flBvs) fls
     _ -> do
        doc <- lift $ text "floatingsFromPLets: empty splitFloating:"
                 $$ text "  plet = " <+> nest 12 (pretty plet)
@@ -568,7 +582,8 @@ floatPatterns1 doCrossCallFloat vs t = case t of
             reportSDoc "treeless.opt.float.ccf" 50
               $ text ("-- floatNVTDefApp result 1 for " ++ show nameF)
               $$ nest 8
-                 (vcat [text "r1 = " <+> nest 5 (pretty r1)
+                 (vcat [text "vs = " <+> pretty vs
+                       ,text "r1 = " <+> nest 5 (pretty r1)
                        ,text "fls1 = " <+> nest 6 (vcat $ map pretty fls1)
                        ])
         liftIO $ hFlush stdout
@@ -578,7 +593,8 @@ floatPatterns1 doCrossCallFloat vs t = case t of
             reportSDoc "treeless.opt.float.ccf" 50
               $ text ("-- floatNVTDefApp p2 for " ++ show nameF)
               $$ nest 8
-                 (vcat [text "r2 = " <+> nest 5 (pretty r2)
+                 (vcat [text "vs = " <+> pretty vs
+                       ,text "r2 = " <+> nest 5 (pretty r2)
                        ,text "appFloats = " <+> nest 6 (vcat $ map pretty appFloats)
                        ])
         liftIO $ hFlush stdout
@@ -588,7 +604,8 @@ floatPatterns1 doCrossCallFloat vs t = case t of
             reportSDoc "treeless.opt.float.ccf" 50
               $ text ("-- floatNVTDefApp result for " ++ show nameF)
               $$ nest 8
-                 (vcat [text "r3 = " <+> nest 5 (pretty r3)
+                 (vcat [text "vs = " <+> pretty vs
+                       ,text "r3 = " <+> nest 5 (pretty r3)
                        ,text "fls3 = " <+> nest 5 (vcat $ map pretty fls3)
                        ])
         liftIO $ hFlush stdout
@@ -759,9 +776,42 @@ squashFloatings doCrossCallFloat flsC t = case splitFloating t of
                           reportSDoc "treeless.opt.float.ccf" 50
                             $ text "-- squashFloatings: match result: " <+> nest 4 (pretty m)
                         case m of
-                          Nothing -> second (applyFloating fl) <$> wrap fls t0
-                          Just r  -> first (flBoundVars fl :)
-                                  <$> wrap fls (renameNVTTerm r t0)
+                          Nothing -> -- second (applyFloating fl) <$> wrap fls t0
+                            do -- expanded for debug output
+                            (bvs1, t1) <- wrap fls t0
+                            let t2 = applyFloating fl t1
+                            lift $ reportSDoc "treeless.opt.float.ccf" 50
+                              $ text "-- squashFloatings: NO MATCH: "
+                              $$ nest 4 (vcat
+                                [ text ("length fls = " ++ show (length fls))
+                                , text "t0 = " <+> nest 5 (pretty t0)
+                                , text "bvs1 = " <+> pretty bvs1
+                                , text "t1 = " <+> nest 5 (pretty t1)
+                                , text "t2 = " <+> nest 5 (pretty t2)
+                                ])
+                            return (bvs1, t2)
+                          Just r  -> --  first (flBoundVars fl :)
+                                  -- <$> wrap fls (renameNVTTerm r t0)
+                            do -- expanded for debug output
+                            lift $ reportSDoc "treeless.opt.float.ccf" 50
+                              $ text "-- squashFloatings: MATCHED: "
+                              $$ nest 4 (vcat
+                                [ text ("length fls = " ++ show (length fls))
+                                , text "fl = " <+> nest 5 (pretty fl)
+                                , text "t0 = " <+> nest 5 (pretty t0)
+                                , text "r = " <+> pretty r
+                                ])
+                            (bvs1, t1) <- wrap fls (renameNVTTerm r t0)
+                            let flBVs = flBoundVars fl
+                            lift $ reportSDoc "treeless.opt.float.ccf" 50
+                              $ text "-- squashFloatings: MATCHED after recursive wrap call: "
+                              $$ nest 4 (vcat
+                                [ text ("length fls = " ++ show (length fls))
+                                , text "t0 = " <+> nest 5 (pretty t0)
+                                , text "bvs1 = " <+> pretty bvs1
+                                , text ("flBVs = " ++ show flBVs)
+                                ])
+                            return (flBVs : bvs1, t1)
                   (matchBVarss, dubodyInlined {- (equivalent) -} )
                         <- wrap flsCCF dvcall
                   let dv = not $ null matchBVarss

@@ -196,12 +196,16 @@ pPat' :: Int -> NVPat -> P Doc
 pPat' p = prec p . pPat
 
 pFloating :: Floating -> P Doc
-pFloating fl = case fl of
-  FloatingPLet pat rhs _ -> do
-    pat' <- pPat pat
-    rhs' <- pTerm rhs
-    return $ text "let" <+> sep [ pat' <+> text "=", nest 2 rhs' ]
-  FloatingCase v cp -> do
-    v' <- pVar v
-    cp' <- pConPat cp
-    return $ text "case" <+> sep [ v' <+> text "of", nest 2 cp' ]
+pFloating fl = let
+     vs = flExtraScope fl
+     vs' = if null vs then "" else show vs
+  in case fl of
+    FloatingPLet pat rhs _ _ -> do
+      pat' <- pPat pat
+      rhs' <- pTerm rhs
+      return $ text ("let" ++ vs')
+             <+> sep [ pat' <+> text "=", nest 2 rhs' ]
+    FloatingCase v cp _ -> do
+      v' <- pVar v
+      cp' <- pConPat cp
+      return $ text ("case" ++ vs') <+> sep [ v' <+> text "of", nest 2 cp' ]
