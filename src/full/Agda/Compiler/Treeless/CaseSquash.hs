@@ -34,17 +34,14 @@ dedupTerm :: Env -> TTerm -> TTerm
 -- Increment indices in scope to account for newly bound variable
 dedupTerm env (TLam tt) = TLam (dedupTerm (shiftIndices (+1) <$> env) tt)
 dedupTerm env (TLet tt1 tt2) = TLet (dedupTerm env tt1) (dedupTerm (shiftIndices (+1) <$> env) tt2)
-
 -- Check if scrutinee is already in scope
 dedupTerm env body@(TCase sc t def alts) = case lookup sc env of
   -- If in scope with match then substitute body
   Just match -> caseReplacement match body
-
   -- Otherwise add to scope in alt branches
   Nothing -> TCase sc t
     (dedupTerm env def)
     (map (dedupAlt sc env) alts)
-
 -- Continue traversing nested terms in applications
 dedupTerm env (TApp tt args) = TApp (dedupTerm env tt) (map (dedupTerm env) args)
 dedupTerm env body = body
