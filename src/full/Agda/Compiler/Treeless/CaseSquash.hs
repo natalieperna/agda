@@ -16,16 +16,15 @@ import Agda.Utils.Impossible
 -- | Eliminates case expressions where the scrutinee has already
 -- been matched on by an enclosing parent case expression.
 squashCases :: QName -> TTerm -> TCM TTerm
-squashCases q body = return $ dedupTerm (0, []) body
+squashCases q body = return $ dedupTerm [] body
 
 -- | Case scrutinee (de Bruijn index) with alternative match
 --   for that expression, made up of qualified name of constructor
 --   and a list of its arguments (also as de Bruijn indices)
 type CaseMatch = (Int, (QName, [Int]))
 
--- | Environment containing next de Bruijn index to be introduced
---   and 'CaseMatch'es in scope.
-type Env = (Int, [CaseMatch])
+-- | Environment containing 'CaseMatch'es in scope.
+type Env = [CaseMatch]
 
 -- | Recurse through 'TTerm's, accumulting environment of case alternatives
 --   matched and replacing repeated cases.
@@ -37,7 +36,7 @@ dedupTerm env (TLam tt) = TLam (dedupTerm (shiftIndices (+1) env) tt)
 dedupTerm env (TLet tt1 tt2) = TLet (dedupTerm env tt1) (dedupTerm (shiftIndices (+1) env) tt2)
 
 -- Check if scrutinee is already in scope
-dedupTerm env@(n, cs) body@(TCase sc t def alts) = case lookup sc cs of
+dedupTerm env body@(TCase sc t def alts) = case lookup sc env of
   -- If in scope with match then substitute body
   Just match -> caseReplacement match body
 
@@ -74,12 +73,12 @@ dedupAlt sc env (TALit lit body) = TALit lit (dedupTerm env body)
 
 -- | Add a new case match to environment
 addToEnv :: CaseMatch -> Env -> Env
-addToEnv c (n, cs) = (n, c:cs)
+addToEnv c cs = c:cs
 
 -- | Shift all de Bruijn indices in an environment according to provided
 --   function on integers
 shiftIndices :: (Int -> Int) -> Env -> Env
-shiftIndices f (n, cs) = (f n, map (shiftIndices' f) cs)
+shiftIndices f cs = map (shiftIndices' f) cs
   where
     shiftIndices' :: (Int -> Int) -> CaseMatch -> CaseMatch
     shiftIndices' f (sc, (name, vars)) = (f sc, (name, map f vars))
