@@ -66,14 +66,10 @@ lookupTACon _ [] = Nothing
 -- | Introduce new constructor matches into environment scope
 dedupAlt :: Int -> Env -> TAlt -> TAlt
 dedupAlt sc env (TACon name ar body) =
-  let env' = addToEnv (sc + ar, (name, [ar-1,ar-2..0])) (shiftIndices (+ar) env)
+  let env' = (sc + ar, (name, [ar-1,ar-2..0])):(shiftIndices (+ar) env)
   in TACon name ar (dedupTerm env' body)
 dedupAlt sc env (TAGuard guard body) = TAGuard guard (dedupTerm env body)
 dedupAlt sc env (TALit lit body) = TALit lit (dedupTerm env body)
-
--- | Add a new case match to environment
-addToEnv :: CaseMatch -> Env -> Env
-addToEnv c cs = c:cs
 
 -- | Shift all de Bruijn indices in an environment according to provided
 --   function on integers
