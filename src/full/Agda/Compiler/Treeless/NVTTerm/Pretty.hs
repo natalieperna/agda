@@ -101,9 +101,10 @@ pTerm t = case t of
               <*> pTerm c
   NVTDef var f -> text . shows f <$> case var of
     NVTDefDefault -> return ""
-    NVTDefAbstractPLet is -> do
+    NVTDefAbstractPLet -> return ".dv"
+    NVTDefFloating is -> do
       let vs = map show is
-      return $ ".dv[ " ++ unwords (vs ++ ["]"])
+      return $ ".float[ " ++ unwords (vs ++ ["]"])
   NVTCon c -> pure $ text (show c)
   NVTLit l -> pure $ pretty l
   NVTPrim op | isJust (isInfix op) -> pure $ text ("_" ++ opName op ++ "_")

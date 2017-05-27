@@ -66,8 +66,9 @@ data NVTAlt
 
 -- ``Flavour'' of @NVTDef@, analogous to @TDefVariant@
 data NVTDefVariant
-  = NVTDefDefault             -- traditional variants: "du*" or "d*"
-  | NVTDefAbstractPLet [Var]  -- additional variable arguments for "dv*" variant.
+  = NVTDefDefault         -- traditional variants: "du*" or "d*"
+  | NVTDefFloating [Var]  -- additional variable arguments for possible switch to "dv*" variant.
+  | NVTDefAbstractPLet    -- with additional arguments for "dv*" variant.
   deriving (Show)
 
 instance Eq NVTTerm where (==) = eqNVTTerm
@@ -87,7 +88,8 @@ eqNVTTerm = eqT IntMap.empty
 
     eqVariant :: IntMap Int -> NVTDefVariant -> NVTDefVariant -> Bool
     eqVariant _ NVTDefDefault NVTDefDefault = True
-    eqVariant m (NVTDefAbstractPLet us) (NVTDefAbstractPLet vs) = eqVs m us vs
+    eqVariant m NVTDefAbstractPLet NVTDefAbstractPLet = True
+    eqVariant m (NVTDefFloating us) (NVTDefFloating vs) = eqVs m us vs
     eqVariant _ _ _ = False
 
     eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool

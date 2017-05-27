@@ -132,7 +132,8 @@ fromTTerm0 letOpt vs0 t0 = fromT vs0 t0 where
     TPrim p -> return (NVTPrim p, emptyVarSet)
     TDef TDefDefault name -> return (NVTDef NVTDefDefault name, emptyVarSet)
     TDef (TDefAbstractPLet i) name -> do
-      var' <- NVTDefAbstractPLet <$> getVars i -- map (vs !!) is
+      var' <- return NVTDefAbstractPLet -- <$> getVars i -- map (vs !!) is
+         -- \edcomm{WK}{Better |__IMPOSSIBLE__|?}
       return (NVTDef var' name, emptyVarSet)
     TApp f as -> do
       (f', vsF) <- fromT vs f
@@ -201,7 +202,9 @@ toTTerm0 vs t = case t of
     where
       var' = case var of
         NVTDefDefault -> TDefDefault
-        NVTDefAbstractPLet us -> TDefAbstractPLet $ length us -- map (fromVar __IMPOSSIBLE__ vs) us
+        NVTDefFloating _us -> TDefDefault -- |__IMPOSSIBLE__|  -- should have been squashed away.
+          -- \edcomm{WK}{Currently occurring in |t'| in |mkCCF 2:|}
+        NVTDefAbstractPLet -> TDefAbstractPLet 0 -- |TDefAbstractPLet __IMPOSSIBLE__|
   NVTApp f ts -> TApp (toTTerm0 vs f) (map (toTTerm0 vs) ts)
   NVTLam v b -> TLam $ toTTerm0 (v : vs) b
   NVTLit lit -> TLit lit
@@ -239,8 +242,8 @@ copyNVTTerm t = case t of
   NVTPrim p -> return t
   NVTDef variant name -> do
     variant' <- case variant of
-      NVTDefDefault -> return variant
-      NVTDefAbstractPLet us -> NVTDefAbstractPLet <$> mapM copyVar us
+      NVTDefFloating us -> NVTDefFloating <$> mapM renameVarS us
+      _ -> return variant
     return $ NVTDef variant' name
   NVTApp f ts -> (NVTApp <$> copyNVTTerm f) <*> mapM copyNVTTerm ts
   NVTLam v b -> do
@@ -273,8 +276,8 @@ copyNVTAlt (NVTALit lit b) = NVTALit lit <$> copyNVTTerm b
 fvarsNVTTerm :: NVTTerm -> VarSet
 fvarsNVTTerm (NVTVar v) = singletonVarSet v
 fvarsNVTTerm (NVTPrim p) = emptyVarSet
-fvarsNVTTerm (NVTDef NVTDefDefault name) = emptyVarSet
-fvarsNVTTerm (NVTDef (NVTDefAbstractPLet vs) name) = emptyVarSet -- listToVarSet vs
+fvarsNVTTerm (NVTDef (NVTDefFloating vs) name) = listToVarSet vs
+fvarsNVTTerm (NVTDef _ name) = emptyVarSet
 fvarsNVTTerm (NVTApp f ts) = unionsVarSet $ fvarsNVTTerm f : map fvarsNVTTerm ts
 fvarsNVTTerm (NVTLam v b) = deleteVarSet v $ fvarsNVTTerm b
 fvarsNVTTerm (NVTLit lit) = emptyVarSet
@@ -325,6 +328,20 @@ insertNVRename (V i) v@(V j) r@(NVRename m)
 lookupNVRename :: Var -> NVRename -> Maybe Var
 lookupNVRename (V i) (NVRename m) = IntMap.lookup i m
 
+unionNVRename :: NVRename -> NVRename -> NVRename
+unionNVRename (NVRename m1) (NVRename m2) = NVRename $ IntMap.union m1 m2
+
+domRestrNVRename :: [Var] -> NVRename -> NVRename
+domRestrNVRename vs0 r = h emptyNVRename vs0
+  where
+    h :: NVRename -> [Var] -> NVRename
+    h r' [] = r'
+    h r' (v : vs) = h r'' vs
+      where
+        r'' = case lookupNVRename v r of
+          Nothing -> r'
+          Just v' -> insertNVRename v v' r'
+
 zipInsertNVRename :: [Var] -> [Var] -> NVRename -> NVRename
 zipInsertNVRename us vs r = foldr ($) r $ zipWith insertNVRename us vs
 
@@ -355,8 +372,9 @@ renameNVTTerm r0@(NVRename m) t0
     renTTerm r (NVTVar v) = NVTVar $ renameVar r v
     renTTerm r t@(NVTPrim _) = t
     renTTerm r t@(NVTDef NVTDefDefault _) = t
-    renTTerm r t@(NVTDef (NVTDefAbstractPLet vs) name) = t
-      -- = NVTDef (NVTDefAbstractPLet $ map (renameVar r) vs) name
+    renTTerm r t@(NVTDef NVTDefAbstractPLet _) = t
+    renTTerm r t@(NVTDef (NVTDefFloating vs) name) -- = t
+       = NVTDef (NVTDefFloating $ map (renameVar r) vs) name
     renTTerm r (NVTApp f ts) = NVTApp (renTTerm r f) (map (renTTerm r) ts)
     renTTerm r t@(NVTLam v b) = let
         r'@(NVRename m') = deleteNVRename v r

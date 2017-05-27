@@ -579,12 +579,13 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
     (prefix, us) <- case variant of
           T.TDefDefault | and used -> return (dPrefix, [])
           T.TDefDefault            -> return (duPrefix, [])
-          T.TDefAbstractPLet k -> do
-            intros k $ \ ns -> return (dvPrefix, map (HS.Var . HS.UnQual) ns)
+          T.TDefAbstractPLet k -> return (dvPrefix, [])
+            -- intros k $ \ ns -> return (dvPrefix, map (HS.Var . HS.UnQual) ns)
     if not isCompiled && any not used
       then if any not missing then term (etaExpand (needed - given) tm0) else do
         f <- lift $ HS.Var <$> xhqn prefix f  -- used stripped function
-        flip (foldl HS.App) us <$> (f `apps` [ t | (t, True) <- zip ts $ used ++ repeat True ])
+        -- flip (foldl HS.App) us <$>
+        (f `apps` [ t | (t, True) <- zip ts $ used ++ repeat True ])
       else do
         t' <- term (T.TDef variant f)
         t' `apps` ts
@@ -638,8 +639,16 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
     return $ HS.Case (hsCast sc') (alts' ++ [defAlt])
 
   T.TLit l -> return $ literal l
-  T.TDef _variant q -> do
-    HS.Var <$> (lift $ xhqn dPrefix q)
+  T.TDef variant q -> do
+    isCompiled <- lift $ isJust <$> getHaskellPragma q
+    if True -- isCompiled
+    then do
+      -- case variant of
+      --   T.TDefAbstractPLet vs -> lift $ do
+      --     reportSDoc "treeless.opt.float.codegen" 30 $ text ("-- TDefAbstractPLet isCompiled: " ++ show q)
+      --   _ -> return ()
+      HS.Var <$> (lift $ xhqn dPrefix q)
+    else term (T.TApp tm0 [])
   T.TCon q   -> term (T.TApp (T.TCon q) [])
   T.TPrim p  -> return $ compilePrim p
   T.TUnit    -> return HS.unit_con
