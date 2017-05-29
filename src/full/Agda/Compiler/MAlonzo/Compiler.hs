@@ -356,10 +356,11 @@ definition ghcOpts kit Defn{defName = q, defType = ty, theDef = d} = do
                     else closedTerm ghcOpts treeless
     let (ps, b) = lamView e
         lamView :: HS.Exp -> ([HS.Pat], HS.Exp)
-        lamView e =
-          case stripTopCoerce e of
-            HS.Lambda ps b -> (ps, b)
-            b                -> ([], b)
+        lamView = h id
+          where
+            h acc e = case stripTopCoerce e of
+              HS.Lambda ps b -> h (acc . (ps ++)) b
+              b                -> (acc [], b)
         stripTopCoerce (HS.Lambda ps b) = HS.Lambda ps $ stripTopCoerce b
         stripTopCoerce e =
           case hsAppView e of
@@ -394,16 +395,28 @@ definition ghcOpts kit Defn{defName = q, defType = ty, theDef = d} = do
     let pbindsView :: [HS.Decl] -> ([HS.Name], [HS.Decl], [HS.Decl])
         pbindsView = h id id
             where
+               h accv accp (HS.TypeSig _ _ : binds) = h accv accp binds
+                 -- \edcomm{WK}{In principle it would be better to keep |TypeSig|s.}
                h accv accp (pb@(HS.PatBind pat _ _) : binds)
                  = h (accv . patVars pat) (accp . (pb :)) binds
-               h accv accp binds = (accv [], accp [], binds)
+               h accv accp binds
+                 | Just ((name, e) , binds') <- hsVarBindView binds
+                 = h (accv . (name :)) (accp . (hsVarBind name e :)) binds'
+                 | otherwise = (accv [], accp [], binds)
 
         pletView :: HS.Exp -> ([HS.Name], [HS.Decl], HS.Exp)
-        pletView e = case stripTopCoerce e of
-          HS.Let (HS.BDecls ds) b
-            | (pvars, pbinds, binds') <- pbindsView ds
-            -> (pvars, pbinds, (if null binds' then id else HS.Let (HS.BDecls binds')) b)
-          _ -> ([], [], e)
+        pletView = h id id id
+          where
+            h accv accp accb e = case stripTopCoerce e of
+              HS.ExpTypeSig e _ty -> h accv accp accb e
+              HS.Let (HS.BDecls ds) b
+                | (pvars, pbinds, binds') <- pbindsView ds
+                -> h (accv . (pvars ++))
+                     (accp . (pbinds ++))
+                     (accb . (if null binds' then id
+                              else HS.Let (HS.BDecls binds')))
+                     b
+              _ -> (accv [], accp [], accb e)
     let mdv = case mCCF of
             Nothing -> Nothing
             Just ccf -> let

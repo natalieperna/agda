@@ -129,8 +129,24 @@ hsPLet p e b =
   HS.Let (HS.BDecls [HS.PatBind p (HS.UnGuardedRhs e) emptyBinds]) b
 
 hsLet :: HS.Name -> HS.Exp -> HS.Exp -> HS.Exp
-hsLet x e b =
-  HS.Let (HS.BDecls [HS.FunBind [HS.Match x [] (HS.UnGuardedRhs e) emptyBinds]]) b
+hsLet x e b = HS.Let (HS.BDecls [hsVarBind x e]) b
+
+-- WK: Now that HS has PatBind, this could be switched.
+--     Keeping FunBind only to minimise change.
+hsVarBind :: HS.Name -> HS.Exp -> HS.Decl
+hsVarBind x e =
+  HS.FunBind [HS.Match x [] (HS.UnGuardedRhs e) emptyBinds]
+
+hsVarBindView :: [HS.Decl] -> Maybe ((HS.Name, HS.Exp), [HS.Decl])
+hsVarBindView (HS.TypeSig _ _ : ds) = hsVarBindView ds
+hsVarBindView (HS.FunBind [HS.Match name [] (HS.UnGuardedRhs e) Nothing] : ds) = Just ((name, e) , ds)
+hsVarBindView _ = Nothing
+
+hsLetView :: HS.Exp -> Maybe (HS.Name, HS.Exp, HS.Exp)
+hsLetView (HS.Let (HS.BDecls ds) b) = do
+  ((x, e), []) <- hsVarBindView ds
+  Just (x, e, b)
+hsLetView _ = Nothing
 
 hsVarUQ :: HS.Name -> HS.Exp
 hsVarUQ = HS.Var . HS.UnQual

@@ -140,7 +140,7 @@ splitCCF :: TTerm -> Maybe CrossCallFloat
 splitCCF t = case tLamView t of
   (k, t') -> case splitLets t' of
     Nothing -> Nothing
-    Just (plets, t'') -> Just $ CrossCallFloat
+    Just (plets, t'') -> if null plets then Nothing else Just $ CrossCallFloat
       { ccfLambdaLen = k
       , ccfPLets = plets
       , ccfBody = t''
