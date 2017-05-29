@@ -949,7 +949,7 @@ squashFloatings doCrossCallFloat flsC t = do
                           reportSDoc "treeless.opt.float.ccf" 50
                             $ text "-- squashFloatings: Matching " <+> nest 4 (pretty fl)
                           reportSDoc "treeless.opt.float.ccf" 50
-                            $ text "-- squashFloatings: against " <+> nest 4 (pretty flsC)
+                            $ text "-- squashFloatings: against " <+> nest 4 (pretty flsD)
                           reportSDoc "treeless.opt.float.ccf" 50
                             $ text "-- squashFloatings: match result: " <+> nest 4 (pretty m)
                         case m of

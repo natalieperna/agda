@@ -86,16 +86,19 @@ eqNVTTerm = eqT IntMap.empty
     eqVs m (u : us) (v : vs) = eqV m u v && eqVs m us vs
     eqVs _ _ _ = False
 
-    eqVariant :: IntMap Int -> NVTDefVariant -> NVTDefVariant -> Bool
-    eqVariant _ NVTDefDefault NVTDefDefault = True
-    eqVariant m NVTDefAbstractPLet NVTDefAbstractPLet = True
-    eqVariant m (NVTDefFloating us) (NVTDefFloating vs) = eqVs m us vs
-    eqVariant _ _ _ = False
+    -- Semantically, |NVTDefFloating us| is the same as |NVTDefDefault|.
+    -- However, |NVTDefAbstractPLet| is different,
+    -- since already applied to additional arguments.
+    eqVariant :: NVTDefVariant -> NVTDefVariant -> Bool
+    eqVariant NVTDefAbstractPLet NVTDefAbstractPLet = True
+    eqVariant NVTDefAbstractPLet _ = False
+    eqVariant _ NVTDefAbstractPLet = False
+    eqVariant _ _ = True
 
     eqT :: IntMap Int -> NVTTerm -> NVTTerm -> Bool
     eqT m (NVTVar v) (NVTVar v') = eqV m v v'
     eqT m (NVTPrim p) (NVTPrim p') = p == p'
-    eqT m (NVTDef var n) (NVTDef var' n') = n == n' && eqVariant m var var'
+    eqT m (NVTDef var n) (NVTDef var' n') = n == n' && eqVariant var var'
     eqT m (NVTApp f ts) (NVTApp f' ts') = and $ zipWith (eqT m) (f : ts) (f' : ts')
     eqT m (NVTLam (V i) b) (NVTLam (V j) b') = eqT (IntMap.insert i j m) b b'
     eqT m (NVTLit l) (NVTLit l') = l == l'
