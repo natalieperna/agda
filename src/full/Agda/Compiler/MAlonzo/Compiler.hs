@@ -413,7 +413,7 @@ definition ghcOpts kit Defn{defName = q, defType = ty, theDef = d} = do
                  HS.Var (HS.UnQual v) | v `elem` foldr patVars hspvars ps -> hsbody
                  _ -> foldl  (\ f p -> HS.App f $ patExpr p) (HS.Var $ HS.UnQual qdv)
                              $ ps ++ map HS.PVar hspvars
-              dvbinding =funbind qdv (ps ++ map HS.PVar hspvars) hsbody
+              dvbinding = funbind qdv (ps ++ map HS.PVar hspvars) hsbody
               dubody = foldr (\ b -> HS.Let (HS.BDecls [b])) dvcall hspbinds
              in Just (dubody, dvbinding)
     return $ case mdv of

@@ -35,6 +35,7 @@ import Agda.Compiler.Treeless.Subst
 import Agda.Compiler.Treeless.Compare
 import Agda.Compiler.Treeless.NVTTerm
 import Agda.Compiler.Treeless.Pretty
+import Agda.Compiler.Treeless.SplitPLet (splitCCF)
 
 -- import Agda.Utils.Permutation
 import qualified Agda.Utils.Pretty as P
@@ -159,12 +160,7 @@ floatPatterns doCrossCallFloat q t = flip evalStateT 0 $ do
      $ text ("========== floatPatterns " ++ show q ++ ": mkCCF 3:")
      $$ nest 4 (text "plets = " <+> nest 9 (vcat $ map pretty plets))
   let mkCCF = if null plets then const Nothing
-        else \ t -> let k = length lambdaVars in Just $ CrossCallFloat
-        { ccfLambdaLen = k
-        , ccfPLets = plets
-        , ccfBody = unTLam k t -- \edcomm{WK}{|t'| ???}
-        }
-        where
+              else splitCCF
   return (mkCCF, t')
 -- }}}
 

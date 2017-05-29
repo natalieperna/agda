@@ -100,3 +100,48 @@ extractCrossCallFloat t = case tLamView t of
        , ccfPLets = plets
        , ccfBody = b
        }
+
+
+-- If |splitLet t = Just (pl, t')|, then |applyPLet (eTerm pl) t' = t|.
+-- |splitLet| alsosplits simple |let|s, without subsequent |case|.
+splitLet :: TTerm -> Maybe (PLet, TTerm)
+splitLet (TLet t1 t2) = case splitBoundedCase 0 t2 of
+  Nothing -> Just
+    ( PLet
+      { pletFreeVars = fvs -- throw away Occurs to avoid import cycle
+      , pletNumBinders = 0
+      , eTerm = TLet t1 TErased
+      }
+    , t2
+    )
+  Just ((pat, maxv), t') -> Just
+    ( PLet
+      { pletFreeVars = fvs -- throw away Occurs to avoid import cycle
+      , pletNumBinders = maxv
+      , eTerm = TLet t1 pat
+      }
+    , t'
+    )
+  where
+    fvs = Map.foldWithKey (\ k _ -> IntSet.insert k) IntSet.empty $ freeVars t1
+splitLet _ = Nothing
+
+splitLets :: TTerm -> Maybe ([PLet], TTerm)
+splitLets t = do
+  (plet, t')  <- splitLet t
+  let (plets, t'') = h id t'
+        where
+          h acc t = case splitLet t of
+            Nothing -> (acc [], t)
+            Just (plet, t') -> h (acc . (plet :)) t'
+  Just (plet : plets, t'')
+
+splitCCF :: TTerm -> Maybe CrossCallFloat
+splitCCF t = case tLamView t of
+  (k, t') -> case splitLets t' of
+    Nothing -> Nothing
+    Just (plets, t'') -> Just $ CrossCallFloat
+      { ccfLambdaLen = k
+      , ccfPLets = plets
+      , ccfBody = t''
+      }
