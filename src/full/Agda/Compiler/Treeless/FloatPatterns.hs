@@ -11,7 +11,7 @@ import Control.Monad.State
 import Data.Monoid
 import qualified Data.Map as Map
 import Data.Function (on)
-import Data.Maybe (isJust)
+import Data.Maybe (catMaybes)
 import Data.List (nub, partition)
 import qualified Data.IntSet as IntSet
 import Data.IntSet (IntSet)
@@ -923,9 +923,12 @@ squashFloatings doCrossCallFloat flsC t = do
                         $$ text "-- flsCCF: " <+> nest 8 (vcat $ map pretty flsCCF)
                         -- $$ text "-- flsCCF': " <+> nest 8 (vcat $ map pretty flsCCF')
                         -- $$ text "-- flsC': " <+> nest 8 (vcat $ map pretty flsC')
-                  let dvArgs = zipWith h givenUsed vVars
-                        where h False _ = NVTErased
-                              h True v = NVTVar v
+                  let dvArgs0 = zipWith h used vVars
+                        where h False _ = Nothing
+                              h True v = Just v
+                      dvArgs = map (maybe NVTErased NVTVar) dvArgs0
+                        -- \edcomm{where are the binders for |missingUsed|?}
+                      missingVars = catMaybes $ drop given dvArgs0
                   let dvref = NVTDef NVTDefAbstractPLet name
                       dvcall = NVTApp dvref (dvArgs ++ map NVTVar flsCCFboundVars)
                       -- |wrap flsD fls t0 = (vss, t1)|
@@ -936,7 +939,7 @@ squashFloatings doCrossCallFloat flsC t = do
                       -- |flsD| start as |flsC|
                       --     and grow by |fls| as the latter are traversed.
                       -- |flsD| are inside-out, like |flsC|.
-                      -- |fls| should be outside-in
+                      -- |fls| must be outside-in
                       --       --- they are coming from |flsCCF|, should be OK.
                       wrap flsD [] t0 = return ([], t0)
                       wrap flsD (fl : fls) t0 = do
@@ -976,7 +979,8 @@ squashFloatings doCrossCallFloat flsC t = do
                                 , text "t0 = " <+> nest 5 (pretty t0)
                                 , text "r = " <+> pretty r
                                 ])
-                            (bvs1, t1) <- wrap (fl : flsD) fls (renameNVTTerm r t0)
+                            (bvs1, t1) <- wrap flsD (map (renameFloating r) fls)
+                                                    (renameNVTTerm r t0)
                             let flBVs = flBoundVars fl
                             lift $ reportSDoc "treeless.opt.float.ccf" 50
                               $ text "-- squashFloatings: MATCHED after recursive wrap call: "
@@ -987,9 +991,10 @@ squashFloatings doCrossCallFloat flsC t = do
                                 , text ("flBVs = " ++ show flBVs)
                                 ])
                             return (flBVs : bvs1, t1)
-                  (matchBVarss, dubodyInlined {- (equivalent) -} )
+                  (matchBVarss, dubodyInlined0 {- (equivalent) -} )
                         <- wrap flsC flsCCF dvcall
-                  let dv = not $ null matchBVarss
+                  let dubodyInlined = foldr NVTLam dubodyInlined0 missingVars
+                      dv = not $ null matchBVarss
                   result <- if dv
                         then squashTApp dubodyInlined tas'
                         else squashTApp (NVTDef NVTDefDefault name) ts
