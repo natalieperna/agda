@@ -153,15 +153,15 @@ floatPatterns doCrossCallFloat q t = flip evalStateT 0 $ do
   lift . reportSDoc "treeless.opt.float.ccf" 60
      $ text ("========== floatPatterns " ++ show q ++ ": mkCCF 2:")
      $$ nest 4 (text "t' = " <+> nest 6 (pretty t'))
-  let plets = floatingsToPLets (reverse lambdaVars) floats
-          -- \edcomm{WK}{More variables needed?}
-
-  lift . reportSDoc "treeless.opt.float.ccf" 60
-     $ text ("========== floatPatterns " ++ show q ++ ": mkCCF 3:")
-     $$ nest 4 (text "plets = " <+> nest 9 (vcat $ map pretty plets))
-  let mkCCF = if null plets then const Nothing
-              else splitCCF
-  return (mkCCF, t')
+  -- let plets = floatingsToPLets (reverse lambdaVars) floats
+  --         -- \edcomm{WK}{More variables needed?}
+  --
+  -- lift . reportSDoc "treeless.opt.float.ccf" 60
+  --    $ text ("========== floatPatterns " ++ show q ++ ": mkCCF 3:")
+  --    $$ nest 4 (text "plets = " <+> nest 9 (vcat $ map pretty plets))
+  -- let mkCCF = if null plets then const Nothing
+  --             else splitCCF
+  return (splitCCF, t')
 -- }}}
 
 -- {{{ floatingsToPLets :: [Var] -> [Floating] -> [T.PLet]
@@ -885,7 +885,7 @@ squashFloatings doCrossCallFloat flsC t = do
               else -}
             let
                   (vts, tas') = splitAt lambdaLen ts
-                  vVarsExtra = drop given vVars
+                  (vVarsGiven, vVarsExtra) = splitAt given vVars
                   -- some of the |vts| may be erased;
                   -- we use |vVars| instead for generating the floatings.
   {-
@@ -896,7 +896,7 @@ squashFloatings doCrossCallFloat flsC t = do
                   lift $ let ps = zipWith (\ v t -> pretty v <+> nest 8 (pretty t)) vVars vts
                      in reportSDoc "treeless.opt.float.ccf" 50
                        $ text "-- AppTDef args: " <+> nest 8 (vcat ps)
-                  flsCCF <- floatingsFromPLets (reverse vVars) vVarsExtra emptyNVRename
+                  flsCCF <- floatingsFromPLets (reverse $ take lambdaLen vVars) vVarsExtra emptyNVRename
                                              $ ccfPLets ccf
                   let flsCCFboundVarss = map flBoundVars flsCCF
                       flsCCFboundVars = concat flsCCFboundVarss
