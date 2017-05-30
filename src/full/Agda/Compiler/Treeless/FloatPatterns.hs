@@ -712,7 +712,7 @@ floatPatterns1 doCrossCallFloat vs t = case t of
               where h False _ = NVTErased
                     h True v = NVTVar v
         -- flsF' <- floatFloatings doCrossCallFloat vVars {- ??? -} flsF
-        let dvref = NVTDef (NVTDefFloating dvArgVars) nameF
+        let dvref = NVTDef (NVTDefFloating (dvArgVars ++ concatMap flBoundVars flsF)) nameF
             dvcall = NVTApp dvref dvArgs
         let vs2 = reverse newVars ++ vs
             vs1 = (map fst lets) ++ vs2
@@ -886,6 +886,7 @@ squashFloatings doCrossCallFloat flsC t = do
             let
                   (vts, tas') = splitAt lambdaLen ts
                   (vVarsGiven, vVarsExtra) = splitAt given vVars
+                  (vVarsLambdaLen, vVarsCCF) = splitAt lambdaLen vVars
                   -- some of the |vts| may be erased;
                   -- we use |vVars| instead for generating the floatings.
   {-
@@ -896,7 +897,7 @@ squashFloatings doCrossCallFloat flsC t = do
                   lift $ let ps = zipWith (\ v t -> pretty v <+> nest 8 (pretty t)) vVars vts
                      in reportSDoc "treeless.opt.float.ccf" 50
                        $ text "-- AppTDef args: " <+> nest 8 (vcat ps)
-                  flsCCF <- floatingsFromPLets (reverse $ take lambdaLen vVars) vVarsExtra emptyNVRename
+                  flsCCF <- floatingsFromPLets (reverse vVarsLambdaLen) vVarsCCF emptyNVRename
                                              $ ccfPLets ccf
                   let flsCCFboundVarss = map flBoundVars flsCCF
                       flsCCFboundVars = concat flsCCFboundVarss
