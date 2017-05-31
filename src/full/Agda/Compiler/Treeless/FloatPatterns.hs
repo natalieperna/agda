@@ -123,7 +123,7 @@ floatPatterns doCrossCallFloat q t = flip evalStateT 0 $ do
   nvt <- fromTTerm [] t
   lift $ reportSDoc "treeless.opt.float" 20 $ text ("========== { floatPatterns " ++ show q ++ ": starting")
   lift $ reportSDoc "treeless.opt.float" 40 $ nest 2 $ return (P.pretty nvt)
-  tr@(lambdaVars, floats, nvt') <- floatPatternsTop doCrossCallFloat nvt
+  tr@(lambdaVars, floats, nvt') <- floatPatternsTop doCrossCallFloat q nvt
   -- |floats|A version of |tr|, with squashed (and simplified term)
   -- should be cached in |Compiled|
   lift $ reportSDoc "treeless.opt.float" 20 $ text ("========== floatPatterns " ++ show q ++ ": squashing")
@@ -283,6 +283,8 @@ findFloating plet1@(FloatingPLet {pletPat = pat1, pletRHS = t1}) (fl : fls)
    | FloatingPLet {pletPat = pat2, pletRHS = t2} <- fl
    , t1 == t2
    = do
+     avoidU t1
+     avoidU t2
      (m, pu) <- runStateT (unifyNVPatU pat1 pat2) emptyPU
      case m of
        Just pat3 -> do
@@ -369,10 +371,21 @@ floatingsFromPLets vs ws r (plet : plets) = do
       let flBvs = flRevBoundVars fl
           (ws0, ws') = splitAt (length flBvs) ws
           r' = zipInsertNVRename ws0 flBvs r
+          fl' = renameFloatingFVars r fl {flExtraScope = flBvs}
       let vs' = flBvs ++ vs -- \edcomm{WK}{\unfinished}
+      lift $ do
+          reportSDoc "treeless.opt.float.ccf" 50
+            $ text "-- floatingsFromPLets: " <+> pretty vs
+            $$ nest 4 (vcat
+               [text "r = " <+> nest 8 (pretty r)
+               ,text "plet = " <+> nest 8 (pretty plet)
+               ,text "fl = " <+> nest 8 (pretty fl)
+               ,text "r' = " <+> nest 8 (pretty r')
+               ,text "fl' = " <+> nest 8 (pretty fl')
+               ,text "flBvs = " <+> nest 8 (pretty flBvs)
+               ])
       fls <- floatingsFromPLets vs' ws' r' plets
-      return $ renameFloatingFVars r' fl {flExtraScope = flBvs}
-             : map (addExtraScope flBvs) fls
+      return $ fl' : map (addExtraScope flBvs) fls
     _ -> do
        doc <- lift $ text "floatingsFromPLets: empty splitFloating:"
                 $$ text "  plet = " <+> nest 12 (pretty plet)
@@ -380,18 +393,18 @@ floatingsFromPLets vs ws r (plet : plets) = do
        trace (show doc) __IMPOSSIBLE__
 -- }}}
 
--- {{{ floatPatterns0 :: Bool -> [Var] -> NVTTerm -> U TCM ([Fl], NVTTerm)
+-- {{{ floatPatterns0 :: Bool -> QName -> [Var] -> NVTTerm -> U TCM ([Fl], NVTTerm)
 -- | @floatPatterns0@ duplicates PLet occurrences at join points.
 -- The @vs@ argument is an inside-out list of the binders in scope
 -- from the call stack, ignoring unmanifested duplication of |Floating|s.
 -- \edcomm{WK}{Should the |Floating|s be accompanied by the copy of |vs| used when generating them?}
 -- For the purpose of debug output generation,
 -- the work of @floatPatterns0@ happens in @floatPatterns1@.
-floatPatterns0 :: Bool -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
-floatPatterns0 doCrossCallFloat vs t = do
-  r@(fls, t') <- floatPatterns1 doCrossCallFloat vs t
+floatPatterns0 :: Bool -> QName -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns0 doCrossCallFloat q vs t = do
+  r@(fls, t') <- floatPatterns1 doCrossCallFloat q vs t
   lift $ reportSDoc "treeless.opt.float.fp" 50 $
-    text ("====== floatPatterns0 " ++ show (take 17 vs))
+    text ("====== floatPatterns0 " ++ shows q (' ' : show (take 17 vs)))
     $$ (nest 2 . return $ P.pretty t)
   lift $ reportSDoc "treeless.opt.float.fp" 50 $
     text "=== result:"
@@ -399,42 +412,44 @@ floatPatterns0 doCrossCallFloat vs t = do
   return r
 -- }}}
 
--- {{{ floatPatternsTop :: Bool -> NVTTerm -> U TCM ([Var], [Fl], NVTTerm)
+-- {{{ floatPatternsTop :: Bool -> QName -> NVTTerm -> U TCM ([Var], [Fl], NVTTerm)
 -- |floatPatternsTop| is intended to prepare for caching in |Compiled|
-floatPatternsTop :: Bool -> NVTTerm -> U TCM ([Var], [Floating], NVTTerm)
-floatPatternsTop doCrossCallFloat = h []
+floatPatternsTop :: Bool -> QName -> NVTTerm -> U TCM ([Var], [Floating], NVTTerm)
+floatPatternsTop doCrossCallFloat q = h []
   where
     h :: [Var] -> NVTTerm -> U TCM ([Var], [Floating], NVTTerm)
     h vs (NVTLam v tb) = do
       (vs', fls, tb') <- h (v : vs) tb
       return (vs', fls, NVTLam v tb') -- Adding the lambdas back in for |floatPatterns|
     h vs t = do
-      (fls, t') <- floatPatterns0 doCrossCallFloat vs t
+      (fls, t') <- floatPatterns0 doCrossCallFloat q vs t
       return (reverse vs, fls, t')
 -- }}}
 
 
--- {{{ -- floatFloatings :: Bool -> [Var] -> [Floating] -> U TCM [Floating]
--- \edcomm{WK}{Big hammer! Currently unused.}
-floatFloatings :: Bool -> [Var] -> [Floating] -> U TCM [Floating]
-floatFloatings doCrossCallFloat vs fls = snd <$>
-  (joinFloatingss =<< mapM (floatFloating doCrossCallFloat vs) fls)  -- \edcomm{WK}{|vs|?}
+-- {{{ floatFloatings :: Bool -> QName -> [Var] -> [Floating] -> U TCM [Floating]
+-- \edcomm{WK}{Possibly big hammer!}
+floatFloatings :: Bool -> QName -> [Var] -> [Floating] -> U TCM [Floating]
+floatFloatings False _ _ fls = return fls
+floatFloatings doCrossCallFloat q vs fls = snd <$>
+  (joinFloatingss =<< mapM (floatFloating doCrossCallFloat q vs) fls)  -- \edcomm{WK}{|vs|?}
   where
-    floatFloating :: Bool -> [Var] -> Floating -> U TCM [Floating]
-    floatFloating doCrossCallFloat vs fl@(FloatingPLet {}) = do
-      (fls', rhs') <- floatPatterns1 doCrossCallFloat vs $ pletRHS fl
-      return $ fls' ++ [mkFloatingPLet (pletPat fl) rhs']  -- \edcomm{WK}{|insertFloating|?}
-    floatFloating doCrossCallFloat vs fl = return [fl]
+    floatFloating :: Bool -> QName -> [Var] -> Floating -> U TCM [Floating]
+    floatFloating doCrossCallFloat q vs fl@(FloatingPLet {}) = do
+      (fls', rhs') <- floatPatterns1 doCrossCallFloat q vs $ pletRHS fl
+      (m, fls'') <- insertFloating (mkFloatingPLet (pletPat fl) rhs') fls'
+      return fls'' -- fls' ++ [mkFloatingPLet (pletPat fl) rhs']  -- \edcomm{WK}{?}
+    floatFloating doCrossCallFloat q vs fl = return [fl]
 -- }}}
 
 
 -- |NVTTLet| needs to be treated separately,
 -- since currently evey occurrence would be taken over by |splitFloating|.
 -- \edcomm{WK}{The same will hold for |NVTCase| once |FloatingCase| is reactivated.}
-floatPatterns1 :: Bool -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
-floatPatterns1 doCrossCallFloat vs t = case t of
+floatPatterns1 :: Bool -> QName -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns1 doCrossCallFloat q vs t = case t of
   NVTLet v te tb -> do
-      (flsb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
+      (flsb, tb') <- floatPatterns0 doCrossCallFloat q (v : vs) tb
       floatNVTLet vs v te flsb tb'
 {-
           (_, fls'') <- joinFloatings fls' [fl]
@@ -449,7 +464,7 @@ floatPatterns1 doCrossCallFloat vs t = case t of
 -}
   _ | Just (fl, t') <- splitFloating t
     -> let vs' = flRevBoundVars fl ++ vs in do
-        (fls, t'') <- floatPatterns0 doCrossCallFloat vs' t'
+        (fls, t'') <- floatPatterns0 doCrossCallFloat q vs' t'
         m <- insertFloating fl fls
         return $ case m of
           (Nothing, fls')             -> (fls', applyFloating fl t'')
@@ -491,7 +506,7 @@ floatPatterns1 doCrossCallFloat vs t = case t of
             -- \unfinished
 -}
 
-  NVTDef NVTDefDefault name -> floatPatterns1 doCrossCallFloat vs (NVTApp t [])
+  NVTDef NVTDefDefault name -> floatPatterns1 doCrossCallFloat q vs (NVTApp t [])
   NVTDef NVTDefAbstractPLet name -> __IMPOSSIBLE__-- only creating these here.
   NVTDef (NVTDefFloating _) name -> __IMPOSSIBLE__ -- only creating these here.
     {-
@@ -509,24 +524,24 @@ floatPatterns1 doCrossCallFloat vs t = case t of
       w (c : cs) = c : w cs
      -}
   NVTApp tf tas -> do
-    (flsf, tf') <- floatPatterns0 doCrossCallFloat vs tf
+    (flsf, tf') <- floatPatterns0 doCrossCallFloat q vs tf
     floatNVTApp vs flsf tf tas
   NVTLam v tb -> do
-    (flsb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
+    (flsb, tb') <- floatPatterns0 doCrossCallFloat q (v : vs) tb
     floatNVTLam v flsb tb
   NVTLit _ -> return ([], t)
   NVTCon _ -> return ([], t)
   {-
   NVTLet v te tb -> do -- taken care of above.
     do
-    (flse, te') <- floatPatterns0 doCrossCallFloat vs te
-    (flsb, tb') <- floatPatterns0 doCrossCallFloat (v : vs) tb
+    (flse, te') <- floatPatterns0 doCrossCallFloat q vs te
+    (flsb, tb') <- floatPatterns0 doCrossCallFloat q (v : vs) tb
     let flsb' = filter (not . (v `elemVarSet`) . flFreeVars) flsb
     (fls, fls') <- joinFloatings flse flsb'
     return (fls', foldr applyFloating (NVTLet v te' tb') fls)
   -}
   NVTCase i ct dft alts -> do
-    (flsdft, dft') <- floatPatterns0 doCrossCallFloat vs dft
+    (flsdft, dft') <- floatPatterns0 doCrossCallFloat q vs dft
     (pairs, alts') <- unzip <$> mapM (floatNVTAlt vs) alts
     let (flsCs, flsRs) = unzip pairs
     (flsC, flsR) <- joinFloatingss flsRs
@@ -543,15 +558,15 @@ floatPatterns1 doCrossCallFloat vs t = case t of
     -- |floatNVTAlt| returns a pair like |joinFloatings|
     floatNVTAlt :: [Var] -> NVTAlt -> U TCM (([Floating],[Floating]), NVTAlt)
     floatNVTAlt vs (NVTACon name cvars b) = do
-      (flsb, b') <- floatPatterns0 doCrossCallFloat (reverse cvars ++ vs) b
+      (flsb, b') <- floatPatterns0 doCrossCallFloat q (reverse cvars ++ vs) b
       return (([], filter (\ fl -> all (not . (`elemVarSet` flFreeVars fl)) cvars) flsb), NVTACon name cvars b')
     floatNVTAlt vs (NVTAGuard g b) = do
-      (flsg, g') <- floatPatterns0 doCrossCallFloat vs g
-      (flsb, b') <- floatPatterns0 doCrossCallFloat vs b
+      (flsg, g') <- floatPatterns0 doCrossCallFloat q vs g
+      (flsb, b') <- floatPatterns0 doCrossCallFloat q vs b
       flsPair <- joinFloatings flsg flsb
       return (flsPair, NVTAGuard g' b')
     floatNVTAlt vs (NVTALit lit b) = do
-      (flsb, b') <- floatPatterns0 doCrossCallFloat vs b
+      (flsb, b') <- floatPatterns0 doCrossCallFloat q vs b
       return (([], flsb), NVTALit lit b')
 -- }}}
 
@@ -570,7 +585,7 @@ floatPatterns1 doCrossCallFloat vs t = case t of
                        ,text "tas = " <+> vcat (map pretty tas)
                        ,text "control."
                        ])
-      (flsas, tas') <- unzip <$> mapM (floatPatterns0 doCrossCallFloat vs) tas
+      (flsas, tas') <- unzip <$> mapM (floatPatterns0 doCrossCallFloat q vs) tas
       (flsC, flsR) <- joinFloatingss $ flsf : flsas
       return (flsR, foldr applyFloating (NVTApp tf tas') flsC)
 -- }}}
@@ -612,7 +627,7 @@ floatPatterns1 doCrossCallFloat vs t = case t of
                        ,text "tb = " <+> nest 5 (pretty tb')
                        ,text "flsb = " <+> nest 6 (vcat $ map pretty flsb)
                        ])
-      (flse, te') <- floatPatterns0 doCrossCallFloat vs te
+      (flse, te') <- floatPatterns0 doCrossCallFloat q vs te
       lift $ do
             reportSDoc "treeless.opt.float.ccf" 60
               $ text ("-- floatNVTLet 2 " ++ unwords [show vs, show v])
@@ -707,11 +722,14 @@ floatPatterns1 doCrossCallFloat vs t = case t of
                        ,text ("given = " ++ shows given ";") $$ nest 2 (vcat $ map pretty ts)
                        ,text "plets:" $$ nest 2 (vcat $ map pretty plets)
                        ])
-        flsF <- floatingsFromPLets (reverse dvArgVars) [] emptyNVRename plets
+        flsF <- pruneFloatings (floatingHasName nameF) emptyVarSet -- \edcomm{WK}{as long as we don't prune at/before CCF registration time}
+             <$> floatingsFromPLets (reverse dvArgVars) [] emptyNVRename plets
         let dvArgs = zipWith h givenUsed dvArgVars
               where h False _ = NVTErased
                     h True v = NVTVar v
-        -- flsF' <- floatFloatings doCrossCallFloat vVars {- ??? -} flsF
+        flsF <- if nameF == q -- \edcomm{WK}{for now, just cut recursive calls.}
+          then return flsF
+          else floatFloatings doCrossCallFloat q dvArgVars flsF
         let dvref = NVTDef (NVTDefFloating (dvArgVars ++ concatMap flBoundVars flsF)) nameF
             dvcall = NVTApp dvref dvArgs
         let vs2 = reverse newVars ++ vs
@@ -798,15 +816,15 @@ floatPatterns1 doCrossCallFloat vs t = case t of
 -- If |fls| are considered to move into binders of |vs|,
 -- then only |pruneFloatings vs fls| are allowed to move in.
 -- |fls| are inside-out.
-pruneFloatings :: VarSet -> [Floating] -> [Floating]
-pruneFloatings vs = reverse . pruneRevFloatings vs . reverse
+pruneFloatings :: (Floating -> Bool) -> VarSet -> [Floating] -> [Floating]
+pruneFloatings mustPrune vs = reverse . pruneRevFloatings mustPrune vs . reverse
 
-pruneRevFloatings :: VarSet -> [Floating] -> [Floating]
-pruneRevFloatings vs [] = []
-pruneRevFloatings vs (fl : fls) = let flBs = flBoundVars fl
-  in if nullVarSet (vs `intersectionVarSet` flFreeVars fl)
-  then (fl :) $ pruneRevFloatings vs fls
-  else pruneRevFloatings (foldr insertVarSet vs $ flBoundVars fl) fls
+pruneRevFloatings :: (Floating -> Bool) -> VarSet -> [Floating] -> [Floating]
+pruneRevFloatings _ _ [] = []
+pruneRevFloatings mustPrune vs (fl : fls) = let flBs = flBoundVars fl
+  in if nullVarSet (vs `intersectionVarSet` flFreeVars fl) && not (mustPrune fl)
+  then (fl :) $ pruneRevFloatings mustPrune vs fls
+  else pruneRevFloatings mustPrune (foldr insertVarSet vs $ flBoundVars fl) fls
 
 
 -- |squashFloatings| is to be called after |floatPatterns0|
@@ -1021,10 +1039,10 @@ squashFloatings doCrossCallFloat flsC t = do
         tf' <- squashFloatings doCrossCallFloat flsC tf
         squashTApp tf' tas
       NVTLam v tb -> NVTLam v <$> squashFloatings doCrossCallFloat flsC' tb
-        where flsC' = pruneFloatings (singletonVarSet v) flsC
+        where flsC' = pruneFloatings (const False) (singletonVarSet v) flsC
       NVTLit _ -> return t
       NVTCon _ -> return t
-      NVTLet v te tb -> let flsC' = pruneFloatings (singletonVarSet v) flsC
+      NVTLet v te tb -> let flsC' = pruneFloatings (const False) (singletonVarSet v) flsC
         in do
           tb' <- squashFloatings doCrossCallFloat flsC' tb
           squashTLet v te tb'
@@ -1049,7 +1067,7 @@ squashFloatings doCrossCallFloat flsC t = do
     squashTAlt :: NVTAlt -> U TCM NVTAlt
     squashTAlt (NVTACon name cvars b) = NVTACon name cvars
         <$> squashFloatings doCrossCallFloat flsC' b
-      where flsC' = pruneFloatings (listToVarSet cvars) flsC
+      where flsC' = pruneFloatings (const False) (listToVarSet cvars) flsC
     squashTAlt (NVTAGuard g b) = do
       g' <- squashFloatings doCrossCallFloat flsC g
       b' <- squashFloatings doCrossCallFloat flsC b

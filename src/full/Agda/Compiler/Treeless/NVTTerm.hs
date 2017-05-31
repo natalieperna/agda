@@ -294,6 +294,15 @@ fvarsNVTAlt (NVTACon c cvars b) = foldr deleteVarSet (fvarsNVTTerm b) cvars
 fvarsNVTAlt (NVTAGuard g b) = fvarsNVTTerm g `unionVarSet` fvarsNVTTerm b
 fvarsNVTAlt (NVTALit lit b) = fvarsNVTTerm b
 
+avoidU :: Monad m => NVTTerm -> U m ()
+avoidU t = let
+    VarSet s = fvarsNVTTerm t
+  in if IntSet.null s then return ()
+    else do
+      i <- get
+      let j = IntSet.findMax s
+      if j >= i then put (j + 1) else return ()
+
 {-
 bvarsNVTTerm :: NVTTerm -> IntSet
 bvarsNVTTerm (NVTVar v) = IntSet.empty
@@ -785,3 +794,29 @@ matchFloating _ _ = Nothing
 
 matchFloatings :: Floating -> [Floating] -> Maybe NVRename
 matchFloatings fl = msum . map (matchFloating fl)
+
+
+nvtHasName :: QName -> NVTTerm -> Bool
+nvtHasName q t = case t of
+  NVTVar v -> False
+  NVTPrim p -> False
+  NVTDef variant name -> q == name
+  NVTApp f ts -> nvtHasName q f || any (nvtHasName q) ts
+  NVTLam v b -> nvtHasName q b
+  NVTLit lit -> False
+  NVTCon c -> q == c
+  NVTLet v e b -> nvtHasName q e || nvtHasName q b
+  NVTCase v caseType dft alts -> nvtHasName q dft || any (nvTAltHasName q) alts
+  NVTUnit -> False
+  NVTSort -> False
+  NVTErased -> False
+  NVTError t -> False
+
+nvTAltHasName :: QName -> NVTAlt -> Bool
+nvTAltHasName q (NVTACon name cvars b) = nvtHasName q b
+nvTAltHasName q (NVTAGuard g b) = nvtHasName q g || nvtHasName q b
+nvTAltHasName q (NVTALit lit b) = nvtHasName q b
+
+floatingHasName :: QName -> Floating -> Bool
+floatingHasName q fl@(FloatingPLet {}) = nvtHasName q $ pletRHS fl
+floatingHasName _ (FloatingCase {}) = False
