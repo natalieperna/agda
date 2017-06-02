@@ -272,6 +272,38 @@ copyNVTAlt (NVTACon name cvars b) = do
 copyNVTAlt (NVTAGuard g b) = (NVTAGuard <$> copyNVTTerm g) <*> copyNVTTerm b
 copyNVTAlt (NVTALit lit b) = NVTALit lit <$> copyNVTTerm b
 
+-- |eraseNVTTerm vs t| corresponds to substituting |NVTErased| for all |vs| in |t|
+-- and then perorming some simplifications.
+eraseNVTTerm :: VarSet -> NVTTerm -> NVTTerm
+eraseNVTTerm vs t = case t of
+  NVTVar v -> if elemVarSet v vs then NVTErased else t
+  NVTPrim p -> t
+  NVTDef variant name -> t
+  NVTApp f ts -> case eraseNVTTerm vs f of
+    NVTErased -> NVTErased  -- \edcomm{WK}{too strict?}
+    f' -> NVTApp f' (map (eraseNVTTerm vs) ts)
+  NVTLam v b -> NVTLam v $ eraseNVTTerm (deleteVarSet v vs) b
+  NVTLit lit -> t
+  NVTCon c -> t
+  NVTLet v e b -> let
+    (vs', e') = case eraseNVTTerm vs e of
+      NVTErased -> (insertVarSet v vs, NVTErased)
+      x -> (deleteVarSet v vs, x)
+    in case eraseNVTTerm vs' b of
+      NVTErased -> NVTErased
+      b' -> NVTLet v e' b'
+  NVTCase v caseType dft alts -> if elemVarSet v vs then NVTErased
+    else  NVTCase v caseType (eraseNVTTerm vs dft) $ map (eraseNVTAlt vs) alts
+  NVTUnit -> t
+  NVTSort -> t
+  NVTErased -> t
+  NVTError _ -> t
+
+eraseNVTAlt :: VarSet -> NVTAlt -> NVTAlt
+eraseNVTAlt vs (NVTACon name cvars b) = NVTACon name cvars
+  $ eraseNVTTerm (foldr deleteVarSet vs cvars) b
+eraseNVTAlt vs (NVTAGuard g b) = NVTAGuard (eraseNVTTerm vs g) (eraseNVTTerm vs b)
+eraseNVTAlt vs (NVTALit lit b) = NVTALit lit $ eraseNVTTerm vs b
 
 fvarsNVTTerm :: NVTTerm -> VarSet
 fvarsNVTTerm (NVTVar v) = singletonVarSet v
@@ -733,6 +765,17 @@ flBoundVars (FloatingCase {fcasePat = cp}) = boundNVConPatVars cp
 
 flRevBoundVars :: Floating -> [Var]
 flRevBoundVars = reverse . flBoundVars
+
+eraseFloating :: VarSet -> Floating -> Maybe Floating
+eraseFloating vs plet@(FloatingPLet {pletPat = p, pletRHS = rhs}) = let
+    vs' = foldr insertVarSet vs $ patVars p
+  in case eraseNVTTerm vs' rhs of
+    NVTErased -> Nothing -- \edcomm{WK}{Right thing to do?}
+    rhs' -> Just $ plet {pletRHS = rhs'}
+eraseFloating vs fc@(FloatingCase {}) = __IMPOSSIBLE__ -- \edcomm{WK}{As long as disabled.}
+
+eraseFloatings :: VarSet -> [Floating] -> [Floating]
+eraseFloatings vs = mapMaybe $ eraseFloating vs
 
 -- The functions |renameNVPat|, |renameNVConPat|, and |renameFloating|
 -- are to be used with renamings resulting from pushout unification.

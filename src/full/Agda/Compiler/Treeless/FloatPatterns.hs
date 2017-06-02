@@ -483,7 +483,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
     else do
     mccf <- lift $ getCrossCallFloat name
     case mccf of
-      Nothing -> return ([], t)
+      Nothing -> floatNVTApp vs [] d tas
       Just ccf -> do
         floatNVTDefApp vs (ccfLambdaLen ccf) name (ccfPLets ccf) tas
   {-
@@ -507,7 +507,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
 -}
 
   NVTDef NVTDefDefault name -> floatPatterns1 doCrossCallFloat q vs (NVTApp t [])
-  NVTDef NVTDefAbstractPLet name -> __IMPOSSIBLE__-- only creating these here.
+  NVTDef NVTDefAbstractPLet name -> return ([], t) -- \edcomm{WK}{only inside CCFs? Should float CCFs again?}
   NVTDef (NVTDefFloating _) name -> __IMPOSSIBLE__ -- only creating these here.
     {-
     return ([], NVTDef NVTDefDefault name')
@@ -710,6 +710,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
             (givenUsed, missingUsed) = splitAt given used
 
         ((dvArgVars, lets), (ts', newVars)) <- mkArgs used ts lambdaLen
+        let erasedVars = listToVarSet . map fst . filter (not . snd) $ zip dvArgVars used
         lift $ do
             reportSDoc "treeless.opt.float.ccf" 50
               $ text "-- floatNVTDefApp 1: " <+> nest 8
@@ -717,19 +718,21 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
                        ,text ("nameF = " ++ show nameF)
                        ,text ("lambdaLen = " ++ show lambdaLen)
                        ,text ("dvArgVars = " ++ show dvArgVars)
+                       ,text ("erasedVars = " ++ show erasedVars)
                        ,text ("newVars = " ++ show newVars)
                        ,text ("used = " ++ shows used (' ' : show needed))
                        ,text ("given = " ++ shows given ";") $$ nest 2 (vcat $ map pretty ts)
                        ,text "plets:" $$ nest 2 (vcat $ map pretty plets)
                        ])
         flsF <- pruneFloatings (floatingHasName nameF) emptyVarSet -- \edcomm{WK}{as long as we don't prune at/before CCF registration time}
+             . eraseFloatings erasedVars
              <$> floatingsFromPLets (reverse dvArgVars) [] emptyNVRename plets
         let dvArgs = zipWith h givenUsed dvArgVars
               where h False _ = NVTErased
                     h True v = NVTVar v
-        flsF <- if nameF == q -- \edcomm{WK}{for now, just cut recursive calls.}
-          then return flsF
-          else floatFloatings doCrossCallFloat q dvArgVars flsF
+        -- flsF <- if nameF == q -- \edcomm{WK}{for now, just cut recursive calls.}
+        --   then return flsF
+        --   else floatFloatings doCrossCallFloat q dvArgVars flsF
         let dvref = NVTDef (NVTDefFloating (dvArgVars ++ concatMap flBoundVars flsF)) nameF
             dvcall = NVTApp dvref dvArgs
         let vs2 = reverse newVars ++ vs
@@ -911,12 +914,14 @@ squashFloatings doCrossCallFloat flsC t = do
                   (dvVars, tas') = second ((++ tas) . map NVTVar)
                      $ splitAt lambdaLen vas
  -}
+                  erasedVars = listToVarSet . map fst . filter (not . snd) $ zip vVars used
                 in do
                   lift $ let ps = zipWith (\ v t -> pretty v <+> nest 8 (pretty t)) vVars vts
                      in reportSDoc "treeless.opt.float.ccf" 50
                        $ text "-- AppTDef args: " <+> nest 8 (vcat ps)
-                  flsCCF <- floatingsFromPLets (reverse vVarsLambdaLen) vVarsCCF emptyNVRename
-                                             $ ccfPLets ccf
+                  flsCCF <- eraseFloatings erasedVars
+                         <$> floatingsFromPLets (reverse vVarsLambdaLen) vVarsCCF emptyNVRename
+                                                (ccfPLets ccf)
                   let flsCCFboundVarss = map flBoundVars flsCCF
                       flsCCFboundVars = concat flsCCFboundVarss
                       renameBvFls [] [] _extraVars r = []
@@ -1014,7 +1019,7 @@ squashFloatings doCrossCallFloat flsC t = do
                         <- wrap flsC flsCCF dvcall
                   let dubodyInlined = foldr NVTLam dubodyInlined0 missingVars
                       dv = not $ null matchBVarss
-                  result <- if dv
+                  result <- eraseNVTTerm erasedVars <$> if dv
                         then squashTApp dubodyInlined tas'
                         else squashTApp (NVTDef NVTDefDefault name) ts
                   lift $ do
