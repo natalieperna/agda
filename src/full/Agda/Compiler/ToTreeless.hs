@@ -408,7 +408,7 @@ maybeInlineDef inlinedAncestors q vs =
     case theDef def of
       fun@Function{}
         | fun ^. funInline -> doinline []
-        | isProperProjection fun && doInlineProj -- && q `notElem` inlinedAncestors ->
+        | isProperProjection fun && doInlineProj && P.prettyShow (I.qnameModule q) /= "Agda.Builtin.Coinduction" -- && q `notElem` inlinedAncestors ->
         -> do
             lift $ reportSDoc "treeless.inline" 20 $ text "-- inlining projection" $$ prettyPure (defName def)
             doinline inlinedAncestors
