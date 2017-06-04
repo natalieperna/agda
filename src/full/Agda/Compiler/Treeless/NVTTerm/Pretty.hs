@@ -155,7 +155,7 @@ pAlt (NVTAGuard g b) =
               <*> (pTerm' 0 b)
 pAlt (NVTACon c cvars b) =
         -- withNames (length cvars) $ \ xs ->
-        pAlt' <$> pTerm' 0 (NVTApp (NVTCon c) $ map NVTVar cvars)
+        pAlt' <$> pTerm' 0 (NVTApp (NVTCon c) $ map (maybe NVTErased NVTVar) cvars)
               <*> pTerm' 0 b
 
 pAlt' :: Doc -> Doc -> Doc
@@ -180,7 +180,7 @@ instance Pretty Floating where
   prettyPrec p t = runP $ prec p (pFloating t)
 
 pConPat :: NVConPat -> P Doc
-pConPat (NVConPat _ct _dft c pats) =
+pConPat (NVConPat _ct _dft c _erased pats) =
     paren 9 $ (\ a bs -> sep [a, nest 2 $ fsep bs])
               <$> pTerm' 9 (NVTCon c)
               <*> mapM (pPat' 10) pats

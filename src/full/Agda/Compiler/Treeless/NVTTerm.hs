@@ -14,7 +14,7 @@ import Control.Monad.Identity (runIdentity)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.List (elemIndex)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, catMaybes)
 import Data.Monoid
 import qualified Data.Map as Map
 import Data.IntSet (IntSet)
@@ -30,6 +30,8 @@ import Agda.Syntax.Fixity
 import Agda.Syntax.Abstract.Name
 import qualified Agda.Syntax.Concrete.Name as C
 import Agda.Syntax.NVTTerm
+import Agda.TypeChecking.Monad (TCM)
+import Agda.TypeChecking.Monad.Signature (getErasedConArgs)
 import Agda.TypeChecking.Substitute
 import Agda.Compiler.Treeless.Subst
 import Agda.Compiler.Treeless.Compare
@@ -88,8 +90,8 @@ unionsVarSet = foldr unionVarSet emptyVarSet
 intersectionVarSet :: VarSet -> VarSet -> VarSet
 intersectionVarSet (VarSet s1) (VarSet s2) = VarSet $ IntSet.intersection s1 s2
 
-fromTTerm' :: TTerm -> NVTTerm
-fromTTerm' t = runIdentity $ evalStateT (fromTTerm [] t) 0
+-- fromTTerm' :: TTerm -> NVTTerm
+-- fromTTerm' t = runIdentity $ evalStateT (fromTTerm [] t) 0
 
 type U m = StateT Int m
 
@@ -109,7 +111,7 @@ getRenaming (u : us) = do
   v <- getVar
   ((u,v) :) <$> getRenaming us
 
-fromTTerm :: Monad m => [Var] -> TTerm -> U m NVTTerm
+fromTTerm :: [Maybe Var] -> TTerm -> U TCM NVTTerm
 fromTTerm vs t = fst <$> fromTTerm0 True vs t
 
 -- |fromTTerm0| also returns the set of free variables in the generated term,
@@ -117,11 +119,12 @@ fromTTerm vs t = fst <$> fromTTerm0 True vs t
 -- If |letOpt = True|, trivial |let|s are not generated ---
 -- therefore |letOpt| must be false for |PLet| conversion
 -- (in |floatingsFromPLets|).
-fromTTerm0 :: Monad m => Bool -> [Var] -> TTerm -> U m (NVTTerm, VarSet)
+fromTTerm0 :: Bool -> [Maybe Var] -> TTerm -> U TCM (NVTTerm, VarSet)
 fromTTerm0 letOpt vs0 t0 = fromT vs0 t0 where
   fromT vs t = case t of
     TVar k -> case vs !!! k of
-      Just v -> return $ (NVTVar v, singletonVarSet v)
+      Just Nothing -> return $ (NVTErased, emptyVarSet)
+      Just (Just v) -> return $ (NVTVar v, singletonVarSet v)
       Nothing -> trace (show (P.text "fromTTerm: variable out of range!"
                   P.$$ P.nest 4 (P.text ("vs = " ++ show vs)
                         P.$$ P.text ("k = " ++ show k)
@@ -141,22 +144,23 @@ fromTTerm0 letOpt vs0 t0 = fromT vs0 t0 where
       return (NVTApp f' as', unionsVarSet (vsF : vssAs))
     TLam b -> do
       v <- getVar
-      (b', vsB) <- fromT (v : vs) b
+      (b', vsB) <- fromT (Just v : vs) b
       return (NVTLam v b', deleteVarSet v vsB)
     TLit lit -> return (NVTLit lit, emptyVarSet)
     TCon c -> return (NVTCon c, emptyVarSet)
     TLet e b -> do
       (e', vsE) <- fromT vs e
       case e' of
-        NVTVar u | letOpt -> fromT (u : vs) b
+        NVTVar u | letOpt -> fromT (Just u : vs) b
         _ -> do
           v <- getVar
-          pB@(b', vsB) <- fromT (v : vs) b
+          pB@(b', vsB) <- fromT (Just v : vs) b
           return $ if letOpt <= v `elemVarSet` vsB
             then (NVTLet v e' b', vsE `unionVarSet` deleteVarSet v vsB)
             else pB
     TCase k caseType dft alts -> case vs !!! k of
-      Just v -> do
+      Just Nothing -> return (NVTErased, emptyVarSet)
+      Just (Just v) -> do
         (dft', vsDft) <- fromT vs dft
         (alts', vssAlts) <- unzip <$> mapM (fromTAlt vs) alts
         return ( NVTCase v caseType dft' alts'
@@ -174,11 +178,13 @@ fromTTerm0 letOpt vs0 t0 = fromT vs0 t0 where
     TErased -> return (NVTErased, emptyVarSet)
     TError t -> return (NVTError t, emptyVarSet)
 
-  fromTAlt :: Monad m => [Var] -> TAlt -> U m (NVTAlt, VarSet)
+  fromTAlt :: [Maybe Var] -> TAlt -> U TCM (NVTAlt, VarSet)
   fromTAlt vs (TACon name arity b) = do
-    cvars <- getVars arity
+    erased  <- lift $ getErasedConArgs name
+    cvars <- mapM (\ b -> if b then return Nothing else Just <$> getVar)
+           . take arity $ erased ++ repeat False
     (b', vsB) <- fromT (reverse cvars ++ vs) b
-    return (NVTACon name cvars b', foldr deleteVarSet vsB cvars)
+    return (NVTACon name cvars b', foldr deleteVarSet vsB $ catMaybes cvars)
   fromTAlt vs (TAGuard g b) = do
     (g', vsG) <- fromT vs g
     (b', vsB) <- fromT vs b
@@ -188,11 +194,11 @@ fromTTerm0 letOpt vs0 t0 = fromT vs0 t0 where
 toTTerm' :: NVTTerm -> TTerm
 toTTerm' = toTTerm []
 
-fromVar :: Nat -> [Var] -> Var -> Nat -- first argument is __IMPOSSIBLE__
-fromVar err vs v = maybe (tr err) id $ elemIndex v vs
+fromVar :: Nat -> [Maybe Var] -> Var -> Nat -- first argument is __IMPOSSIBLE__
+fromVar err vs v = maybe (tr err) id $ elemIndex (Just v) vs
   where  tr = trace $ "fromVar " ++ shows vs (' ' : show v)
 
-toTTerm, toTTerm0 :: [Var] -> NVTTerm -> TTerm
+toTTerm, toTTerm0 :: [Maybe Var] -> NVTTerm -> TTerm
 toTTerm vs t = trace ("toTTerm " ++ shows vs (' ' : P.prettyShow t)) $
                toTTerm0 vs t
 toTTerm0 vs t = case t of
@@ -206,10 +212,10 @@ toTTerm0 vs t = case t of
           -- \edcomm{WK}{Currently occurring in |t'| in |mkCCF 2:|}
         NVTDefAbstractPLet -> TDefAbstractPLet 0 -- |TDefAbstractPLet __IMPOSSIBLE__|
   NVTApp f ts -> TApp (toTTerm0 vs f) (map (toTTerm0 vs) ts)
-  NVTLam v b -> TLam $ toTTerm0 (v : vs) b
+  NVTLam v b -> TLam $ toTTerm0 (Just v : vs) b
   NVTLit lit -> TLit lit
   NVTCon c -> TCon c
-  NVTLet v e b -> TLet (toTTerm0 vs e) (toTTerm0 (v : vs) b)
+  NVTLet v e b -> TLet (toTTerm0 vs e) (toTTerm0 (Just v : vs) b)
   NVTCase v caseType dft alts ->
     TCase (fromVar __IMPOSSIBLE__ vs v) caseType (toTTerm0 vs dft)
       $ map (toTAlt vs) alts
@@ -219,7 +225,7 @@ toTTerm0 vs t = case t of
   NVTError t -> TError t
 
 
-toTAlt :: [Var] -> NVTAlt -> TAlt
+toTAlt :: [Maybe Var] -> NVTAlt -> TAlt
 toTAlt vs (NVTACon name cvars b) =
   TACon name (length cvars) $ toTTerm0 (reverse cvars ++ vs) b
 toTAlt vs (NVTAGuard g b) = TAGuard (toTTerm0 vs g) (toTTerm0 vs b)
@@ -230,6 +236,10 @@ copyVar v = do
   v' <- lift getVar
   modify $ insertNVRename v v'
   return v'
+
+copyMVar :: Monad m => Maybe Var -> StateT NVRename (U m) (Maybe Var) -- for cvars
+copyMVar Nothing = return Nothing
+copyMVar (Just v) = Just <$> copyVar v
 
 renameVarS :: Monad m => Var -> StateT NVRename (U m) Var -- only lookup
 renameVarS v = do
@@ -267,7 +277,7 @@ copyNVTTerm t = case t of
 
 copyNVTAlt :: Monad m => NVTAlt -> StateT NVRename (U m) NVTAlt
 copyNVTAlt (NVTACon name cvars b) = do
-  cvars' <- mapM copyVar cvars
+  cvars' <- mapM copyMVar cvars
   NVTACon name cvars' <$> copyNVTTerm b
 copyNVTAlt (NVTAGuard g b) = (NVTAGuard <$> copyNVTTerm g) <*> copyNVTTerm b
 copyNVTAlt (NVTALit lit b) = NVTALit lit <$> copyNVTTerm b
@@ -301,7 +311,7 @@ eraseNVTTerm vs t = case t of
 
 eraseNVTAlt :: VarSet -> NVTAlt -> NVTAlt
 eraseNVTAlt vs (NVTACon name cvars b) = NVTACon name cvars
-  $ eraseNVTTerm (foldr deleteVarSet vs cvars) b
+  $ eraseNVTTerm (foldr deleteVarSet vs $ catMaybes cvars) b
 eraseNVTAlt vs (NVTAGuard g b) = NVTAGuard (eraseNVTTerm vs g) (eraseNVTTerm vs b)
 eraseNVTAlt vs (NVTALit lit b) = NVTALit lit $ eraseNVTTerm vs b
 
@@ -322,7 +332,7 @@ fvarsNVTTerm NVTErased = emptyVarSet
 fvarsNVTTerm (NVTError t) = emptyVarSet
 
 fvarsNVTAlt :: NVTAlt -> VarSet
-fvarsNVTAlt (NVTACon c cvars b) = foldr deleteVarSet (fvarsNVTTerm b) cvars
+fvarsNVTAlt (NVTACon c cvars b) = foldr deleteVarSet (fvarsNVTTerm b) $ catMaybes cvars
 fvarsNVTAlt (NVTAGuard g b) = fvarsNVTTerm g `unionVarSet` fvarsNVTTerm b
 fvarsNVTAlt (NVTALit lit b) = fvarsNVTTerm b
 
@@ -448,8 +458,8 @@ renameNVTTerm r0@(NVRename m) t0
     -- The |NVRename| argument has already been confirmed to be non-empty
     renameNVTAlt :: NVRename  -> NVTAlt -> NVTAlt
     renameNVTAlt r a@(NVTACon name cvars b) = let
-        r'@(NVRename m') = foldr deleteNVRename r cvars
-        bad (y,x) = (x `elem` cvars) && (V y `elemVarSet` fvarsNVTTerm b)
+        r'@(NVRename m') = foldr deleteNVRename r $ catMaybes cvars
+        bad (y,x) = (Just x `elem` cvars) && (V y `elemVarSet` fvarsNVTTerm b)
       in case filter bad $ IntMap.toList m' of
         [] -> NVTACon name cvars $ renameNVTTerm r' b
         ps -> trace ("captured variables " ++ show ps
@@ -479,7 +489,7 @@ innerNVPatVars (NVPVar _v) =[]
 innerNVPatVars (NVPAsCon _v cp) = boundNVConPatVars cp
 
 boundNVConPatVars :: NVConPat -> [Var]
-boundNVConPatVars (NVConPat _ct _dft _c pats)
+boundNVConPatVars (NVConPat _ct _dft _c _erased pats)
   = map getNVPatVar pats ++ concatMap innerNVPatVars pats
 
 patVars :: NVPat -> [Var]
@@ -496,9 +506,14 @@ caseNVPat a (NVPAsCon _v conPat) b = caseNVConPat a conPat b
 
 -- @caseNVConPat v p b@ is @case v of p -> b@
 caseNVConPat :: Var -> NVConPat -> NVTTerm -> NVTTerm
-caseNVConPat a (NVConPat ct dft c pats) b = NVTCase a ct dft
-   [NVTACon c (map getNVPatVar pats) $ foldr (\ (v, p) -> caseNVConPat v p) b $ withInnerNVPats pats]
+caseNVConPat a (NVConPat ct dft c erased pats) b = NVTCase a ct dft
+   [NVTACon c (get_cvars erased $ map getNVPatVar pats) $ foldr (\ (v, p) -> caseNVConPat v p) b $ withInnerNVPats pats]
 
+get_cvars :: [Bool] -> [Var] -> [Maybe Var]
+get_cvars (True : bs) vs = Nothing : get_cvars bs vs
+get_cvars (False : bs) (v : vs) = Just v : get_cvars bs vs
+get_cvars [] vs = map Just vs
+get_cvars _ _ = __IMPOSSIBLE__
 
 -- Monadic versions: These rename the case scrutinees according to the incoming
 -- NVRename, and create new bound variables, propagating the renaming of those
@@ -512,9 +527,9 @@ caseNVPatU r a@(V i) (NVPVar v@(V j)) b
 caseNVPatU r a (NVPAsCon _v conPat) b = caseNVConPatU r (renameVar r a) conPat b
 
 caseNVConPatU :: Monad m => NVRename -> Var -> NVConPat -> NVTTerm -> U m NVTTerm
-caseNVConPatU r a (NVConPat ct dft c pats) b = NVTCase (renameVar r a) ct dft . (: []) <$> do
+caseNVConPatU r a (NVConPat ct dft c erased pats) b = NVTCase (renameVar r a) ct dft . (: []) <$> do
     vps <- getRenaming $ map getNVPatVar pats
-    let  cvars = map snd vps
+    let  cvars = get_cvars erased $ map snd vps
          r' = listInsertNVRename vps r -- does not need to propagate across siblings.
     b' <- foldM (\ t (v, p) -> caseNVConPatU r' v p t) b $ withInnerNVPats pats
     return $ NVTACon c cvars b'
@@ -560,9 +575,9 @@ unifyNVPat0 p1 p2 pu@(r1@(NVRename m1), r2@(NVRename m2)) = case p2 of
                                      , (insertNVRename v1 v2 r1', r2'))
 
 copyNVConPat :: Monad m => NVConPat -> StateT NVRename (U m) NVConPat
-copyNVConPat (NVConPat ct dft c pats) = do
+copyNVConPat (NVConPat ct dft c erased pats) = do
   dft' <- copyNVTTerm dft
-  NVConPat ct dft' c <$> mapM copyNVPat pats
+  NVConPat ct dft' c erased <$> mapM copyNVPat pats
 
 copyNVPat :: Monad m => NVPat -> StateT NVRename (U m) NVPat
 copyNVPat (NVPVar v) = NVPVar <$> copyVar v
@@ -629,10 +644,10 @@ unifyNVPatsU _ _ = return Nothing
 
 unifyNVConPatU :: Monad m
                => NVConPat -> NVConPat -> StateT PU (U m) (Maybe NVConPat)
-unifyNVConPatU (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2)
-  = if c1 /= c2
+unifyNVConPatU (NVConPat ct1 dft1 c1 erased1 ps1) (NVConPat ct2 dft2 c2 erased2 ps2)
+  = if c1 /= c2 || erased1 /= erased2
     then return Nothing
-    else fmap (NVConPat ct1 dft1 c1) <$> unifyNVPatsU ps1 ps2
+    else fmap (NVConPat ct1 dft1 c1 erased1) <$> unifyNVPatsU ps1 ps2
 
 unifyNVConPat :: NVConPat -> NVConPat -> Maybe (NVConPat, PU)
 unifyNVConPat cp1 cp2 = unifyNVConPat0 cp1 cp2 emptyPU
@@ -641,13 +656,13 @@ unifyNVConPat' :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
 unifyNVConPat' (cv1, cp1) (cv2, cp2) = if cv1 /= cv2 then Nothing else unifyNVConPat cp1 cp2
 
 unifyNVConPat0 :: NVConPat -> NVConPat -> PU -> Maybe (NVConPat, PU)
-unifyNVConPat0 (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2)
+unifyNVConPat0 (NVConPat ct1 dft1 c1 erased1 ps1) (NVConPat ct2 dft2 c2 erased2 ps2)
                pu@(r1@(NVRename m1), r2@(NVRename m2))
   = if c1 /= c2
     then Nothing
     else case unifyNVPats ps1 ps2 pu of
       Nothing -> Nothing
-      Just (ps', pu') ->Just (NVConPat ct1 dft1 c1 ps', pu')
+      Just (ps', pu') ->Just (NVConPat ct1 dft1 c1 erased1 ps', pu')
 
 unifyNVPats :: [NVPat] -> [NVPat] -> PU -> Maybe ([NVPat], PU)
 unifyNVPats [] [] pu = Just ([], pu)
@@ -658,12 +673,12 @@ unifyNVPats (p1 : ps1) (p2 : ps2) pu = do
 unifyNVPats _ _ _ = Nothing
 
 deepUnifyNVConPat1in2 :: (Var, NVConPat) -> (Var, NVConPat) -> Maybe (NVConPat, PU)
-deepUnifyNVConPat1in2 p1@(cv1, cp1) p2@(cv2, cp2@(NVConPat ct2 dft2 c2 ps2))
+deepUnifyNVConPat1in2 p1@(cv1, cp1) p2@(cv2, cp2@(NVConPat ct2 dft2 c2 erased2 ps2))
   | cv1 == cv2
   , Just p <- unifyNVConPat' p1 p2
   = Just p
   | otherwise
-  = first (NVConPat ct2 dft2 c2) <$> h id ps2
+  = first (NVConPat ct2 dft2 c2 erased2) <$> h id ps2
     where
       h :: ([NVPat] -> [NVPat]) -> [NVPat] -> Maybe ([NVPat], PU)
       h acc [] = Nothing
@@ -687,8 +702,8 @@ attachNVConPat v cp (NVPAsCon v' cp')
   | otherwise  = NVPAsCon v' <$> attachToNVConPat v cp cp'
 
 attachToNVConPat :: Var -> NVConPat -> NVConPat -> Maybe NVConPat
-attachToNVConPat v cp (NVConPat ct dft c ps)
-  =NVConPat ct dft c <$> h ps
+attachToNVConPat v cp (NVConPat ct dft c erased ps)
+  =NVConPat ct dft c erased <$> h ps
     where
       h :: [NVPat] -> Maybe [NVPat]
       h [] = Just []
@@ -709,9 +724,9 @@ matchNVPat0 p1 p2 r
                                else Nothing -- clash
   Nothing -> case p1 of
     NVPVar _v1 -> Just $ insertNVRename v1 v2 r
-    NVPAsCon _v1 (NVConPat ct1 dft1 c1 ps1) -> insertNVRename v1 v2 <$> case p2 of
+    NVPAsCon _v1 (NVConPat ct1 dft1 c1 erased1 ps1) -> insertNVRename v1 v2 <$> case p2 of
       NVPVar _v2 -> Nothing
-      NVPAsCon _v2 (NVConPat ct2 dft2 c2 ps2) -> if c1 /= c2
+      NVPAsCon _v2 (NVConPat ct2 dft2 c2 erased2 ps2) -> if c1 /= c2 || erased1 /= erased2
         then Nothing
         else matchNVPats ps1 ps2 r
 
@@ -719,15 +734,15 @@ matchNVConPat :: NVConPat -> NVConPat -> Maybe NVRename
 matchNVConPat  p1 p2 = matchNVConPat0 p1 p2 emptyNVRename
 
 matchNVConPat0 :: NVConPat -> NVConPat -> NVRename -> Maybe NVRename
-matchNVConPat0 (NVConPat ct1 dft1 c1 ps1) (NVConPat ct2 dft2 c2 ps2) r@(NVRename m)
-  = if c1 /= c2
+matchNVConPat0 (NVConPat ct1 dft1 c1 erased1 ps1) (NVConPat ct2 dft2 c2 erased2 ps2) r@(NVRename m)
+  = if c1 /= c2 || erased1 /= erased2
     then Nothing
     else matchNVPats ps1 ps2 r
 
 -- Spec: @deepMatchNVConPat cp cp' = Just r@
 -- iff @r@ is the least renaming such that @renameNVConpat r cp@ occurs in @cp'@.
 deepMatchNVConPat :: NVConPat -> NVConPat -> Maybe NVRename
-deepMatchNVConPat cp cp'@(NVConPat ct2 dft2 c2 ps2)
+deepMatchNVConPat cp cp'@(NVConPat ct2 dft2 c2 erased2 ps2)
   = case matchNVConPat cp cp' of
       Just r ->Just  r
       Nothing -> h $ withInnerNVPats ps2
@@ -781,8 +796,8 @@ eraseFloatings vs = mapMaybe $ eraseFloating vs
 -- are to be used with renamings resulting from pushout unification.
 
 renameNVConPat :: NVRename -> NVConPat -> NVConPat
-renameNVConPat r (NVConPat ct dft c pats)
-  = NVConPat ct (renameNVTTerm r dft) c (map (renameNVPat r) pats)
+renameNVConPat r (NVConPat ct dft c erased pats)
+  = NVConPat ct (renameNVTTerm r dft) c erased (map (renameNVPat r) pats)
 
 renameNVPat :: NVRename -> NVPat -> NVPat
 renameNVPat r (NVPVar v) = NVPVar $ renameVar r v

@@ -592,8 +592,17 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
     (prefix, us) <- case variant of
           T.TDefDefault | and used -> return (dPrefix, [])
           T.TDefDefault            -> return (duPrefix, [])
-          T.TDefAbstractPLet k -> return (dvPrefix, [])
+          T.TDefAbstractPLet _ -> return (dvPrefix, [])
             -- intros k $ \ ns -> return (dvPrefix, map (HS.Var . HS.UnQual) ns)
+    lift $ reportSDoc "treeless.opt.float.ccf" 50
+      $ text ("-- MAlonzo.term : TDef " ++ shows variant (' ' : show f))
+      $$ nest 4 (vcat
+        [ text "ts = " <+> nest 7 (vcat $ map pretty ts)
+        , text "used = " <+> nest 7 (pretty used)
+        , text "missing = " <+> nest 10 (pretty missing)
+        , text ("not isCompiled && any not used = " ++ show (not isCompiled && any not used))
+        , text "tm0 = " <+> nest 6 (pretty tm0)
+        ])
     if not isCompiled && any not used
       then if any not missing then term (etaExpand (needed - given) tm0) else do
         f <- lift $ HS.Var <$> xhqn prefix f  -- used stripped function

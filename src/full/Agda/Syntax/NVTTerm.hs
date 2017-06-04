@@ -59,7 +59,7 @@ data NVTTerm
 
 
 data NVTAlt
-  = NVTACon QName [Var] NVTTerm
+  = NVTACon QName [Maybe Var] NVTTerm  -- |Nothing| for erased arguments
   | NVTAGuard NVTTerm NVTTerm
   | NVTALit Literal NVTTerm
   deriving (Show)
@@ -114,8 +114,13 @@ eqNVTTerm = eqT IntMap.empty
 
     eqA :: IntMap Int -> NVTAlt -> NVTAlt -> Bool
     eqA m (NVTACon c vs b) (NVTACon c' vs' b') = let
-        m' = IntMap.fromList (zip (map unV vs) (map unV vs')) `IntMap.union` m
-      in eqT m' b b'
+        addVs [] [] m0 = Just m0
+        addVs (Nothing : us) (Nothing : vs) m0 = addVs us vs m0
+        addVs (Just (V i) : us) (Just (V j) : vs) m0 = IntMap.insert i j <$> addVs us vs m0
+        addVs _ _ _ = Nothing
+      in case addVs vs vs' m of
+        Nothing -> False
+        Just m' -> eqT m' b b'
     eqA m (NVTAGuard g b) (NVTAGuard g' b') = eqT m g g' && eqT m b b'
     eqA m (NVTALit lit b) (NVTALit lit' b') = lit == lit' && eqT m b b'
     eqA _ _ _ = False
@@ -126,7 +131,7 @@ instance Show NVRename where showsPrec p (NVRename m) = showsPrec p m
 emptyNVRename :: NVRename
 emptyNVRename = NVRename IntMap.empty
 
-data NVConPat = NVConPat CaseType NVTTerm QName [NVPat]
+data NVConPat = NVConPat CaseType NVTTerm QName [Bool] [NVPat]
   deriving (Show)
 
 data NVPat

@@ -11,7 +11,7 @@ import Control.Monad.State
 import Data.Monoid
 import qualified Data.Map as Map
 import Data.Function (on)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isNothing)
 import Data.List (nub, partition)
 import qualified Data.IntSet as IntSet
 import Data.IntSet (IntSet)
@@ -105,7 +105,7 @@ splitFloating t = case Nothing {- splitSingleAltCase t -} of
 -- that |caseNVConPat v conPat t1 == t|.
 splitSingleAltCase :: NVTTerm -> Maybe (Var, NVConPat, NVTTerm)
 splitSingleAltCase (NVTCase v ct dft [NVTACon c cvars t2]) | harmless dft
-  = Just (v, NVConPat ct dft c $ map NVPVar cvars, t2)
+  = Just (v, NVConPat ct dft c (map isNothing cvars) $ map NVPVar $ catMaybes cvars, t2)
 splitSingleAltCase _ = Nothing
 -- }}}
 
@@ -164,16 +164,16 @@ floatPatterns doCrossCallFloat q t = flip evalStateT 0 $ do
   return (splitCCF, t')
 -- }}}
 
--- {{{ floatingsToPLets :: [Var] -> [Floating] -> [T.PLet]
-floatingsToPLets :: [Var] -> [Floating] -> [T.PLet]
+-- {{{ floatingsToPLets :: [Maybe Var] -> [Floating] -> [T.PLet]
+floatingsToPLets :: [Maybe Var] -> [Floating] -> [T.PLet]
 floatingsToPLets vs [] = []
 floatingsToPLets vs (fl : fls) = let
     (plet, vs') = floatingToPLet vs fl
   in plet : floatingsToPLets vs' fls
 -- }}}
 
--- {{{ floatingToPLet :: [Var] -> Floating -> (T.PLet, [Var])
-floatingToPLet :: [Var] -> Floating -> (T.PLet, [Var])
+-- {{{ floatingToPLet :: [Maybe Var] -> Floating -> (T.PLet, [Maybe Var])
+floatingToPLet :: [Maybe Var] -> Floating -> (T.PLet, [Maybe Var])
 floatingToPLet vs fl@(FloatingPLet {pletPat = pat, pletRHS = rhs}) = let
     tt = NVTLet v rhs
       $ maybe NVTErased (caseNVConPat v `flip` NVTErased) (innerNVPat pat)
@@ -187,7 +187,7 @@ floatingToPLet vs fl@(FloatingPLet {pletPat = pat, pletRHS = rhs}) = let
        , T.pletNumBinders = length tBinders
        , T.eTerm = t
        }
-     , tBinders ++ vs
+     , map Just tBinders ++ vs
      )
 floatingToPLet vs _ = __IMPOSSIBLE__ -- \edcomm{WK}{As long as |FloatingCase| is disabled.}
 -- }}}
@@ -348,7 +348,7 @@ joinFloatingss (fls : flss) = do
 -- the binders of which are the |Floating|s floated out of this call.
 -- They therefore need to be renamed together with these |Floatings|!
 
--- {{{ floatingsFromPLets :: [Var] [Var] NVRename [T.PLet] -> U TCM [Fl]
+-- {{{ floatingsFromPLets :: [MVar] [Var] NVRename [T.PLet] -> U TCM [Fl]
 -- |floatingsFromPLets| is called twice:
 -- In |floatPatterns0| with |ws = []|;
 --   for every generated |Floating|,
@@ -357,7 +357,7 @@ joinFloatingss (fls : flss) = do
 -- In |squashFloatings| with |ws = vVarsExtra| to apply the resulting renamings.
 -- \edcomm{WK}{It is possible that too much is going on here at the same time.}
 -- \edcomm{WK}{Assumption about |[T.PLet]| and |ws|: Outside-in!}
-floatingsFromPLets :: [Var] -> [Var] -> NVRename
+floatingsFromPLets :: [Maybe Var] -> [Var] -> NVRename
                    -> [T.PLet] -> U TCM [Floating]
 floatingsFromPLets vs ws r [] = return []
 floatingsFromPLets vs ws r (T.PLet {T.eTerm = TErased} : plets)
@@ -372,7 +372,7 @@ floatingsFromPLets vs ws r (plet : plets) = do
           (ws0, ws') = splitAt (length flBvs) ws
           r' = zipInsertNVRename ws0 flBvs r
           fl' = renameFloatingFVars r fl {flExtraScope = flBvs}
-      let vs' = flBvs ++ vs -- \edcomm{WK}{\unfinished}
+      let vs' = map Just flBvs ++ vs -- \edcomm{WK}{\unfinished}
       lift $ do
           reportSDoc "treeless.opt.float.ccf" 50
             $ text "-- floatingsFromPLets: " <+> pretty vs
@@ -393,14 +393,14 @@ floatingsFromPLets vs ws r (plet : plets) = do
        trace (show doc) __IMPOSSIBLE__
 -- }}}
 
--- {{{ floatPatterns0 :: Bool -> QName -> [Var] -> NVTTerm -> U TCM ([Fl], NVTTerm)
+-- {{{ floatPatterns0 :: Bool -> QName -> [Maybe Var] -> NVTTerm -> U TCM ([Fl], NVTTerm)
 -- | @floatPatterns0@ duplicates PLet occurrences at join points.
 -- The @vs@ argument is an inside-out list of the binders in scope
 -- from the call stack, ignoring unmanifested duplication of |Floating|s.
 -- \edcomm{WK}{Should the |Floating|s be accompanied by the copy of |vs| used when generating them?}
 -- For the purpose of debug output generation,
 -- the work of @floatPatterns0@ happens in @floatPatterns1@.
-floatPatterns0 :: Bool -> QName -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns0 :: Bool -> QName -> [Maybe Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
 floatPatterns0 doCrossCallFloat q vs t = do
   r@(fls, t') <- floatPatterns1 doCrossCallFloat q vs t
   lift $ reportSDoc "treeless.opt.float.fp" 50 $
@@ -422,19 +422,19 @@ floatPatternsTop doCrossCallFloat q = h []
       (vs', fls, tb') <- h (v : vs) tb
       return (vs', fls, NVTLam v tb') -- Adding the lambdas back in for |floatPatterns|
     h vs t = do
-      (fls, t') <- floatPatterns0 doCrossCallFloat q vs t
+      (fls, t') <- floatPatterns0 doCrossCallFloat q (map Just vs) t
       return (reverse vs, fls, t')
 -- }}}
 
 
--- {{{ floatFloatings :: Bool -> QName -> [Var] -> [Floating] -> U TCM [Floating]
+-- {{{ floatFloatings :: Bool -> QName -> [Maybe Var] -> [Floating] -> U TCM [Floating]
 -- \edcomm{WK}{Possibly big hammer!}
-floatFloatings :: Bool -> QName -> [Var] -> [Floating] -> U TCM [Floating]
+floatFloatings :: Bool -> QName -> [Maybe Var] -> [Floating] -> U TCM [Floating]
 floatFloatings False _ _ fls = return fls
 floatFloatings doCrossCallFloat q vs fls = snd <$>
   (joinFloatingss =<< mapM (floatFloating doCrossCallFloat q vs) fls)  -- \edcomm{WK}{|vs|?}
   where
-    floatFloating :: Bool -> QName -> [Var] -> Floating -> U TCM [Floating]
+    floatFloating :: Bool -> QName -> [Maybe Var] -> Floating -> U TCM [Floating]
     floatFloating doCrossCallFloat q vs fl@(FloatingPLet {}) = do
       (fls', rhs') <- floatPatterns1 doCrossCallFloat q vs $ pletRHS fl
       (m, fls'') <- insertFloating (mkFloatingPLet (pletPat fl) rhs') fls'
@@ -446,10 +446,10 @@ floatFloatings doCrossCallFloat q vs fls = snd <$>
 -- |NVTTLet| needs to be treated separately,
 -- since currently evey occurrence would be taken over by |splitFloating|.
 -- \edcomm{WK}{The same will hold for |NVTCase| once |FloatingCase| is reactivated.}
-floatPatterns1 :: Bool -> QName -> [Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
+floatPatterns1 :: Bool -> QName -> [Maybe Var] -> NVTTerm -> U TCM ([Floating], NVTTerm)
 floatPatterns1 doCrossCallFloat q vs t = case t of
   NVTLet v te tb -> do
-      (flsb, tb') <- floatPatterns0 doCrossCallFloat q (v : vs) tb
+      (flsb, tb') <- floatPatterns0 doCrossCallFloat q (Just v : vs) tb
       floatNVTLet vs v te flsb tb'
 {-
           (_, fls'') <- joinFloatings fls' [fl]
@@ -463,7 +463,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
               -> return (fls'', applyFloating cfl $ renameNVTTerm r1 t'')
 -}
   _ | Just (fl, t') <- splitFloating t
-    -> let vs' = flRevBoundVars fl ++ vs in do
+    -> let vs' = map Just (flRevBoundVars fl) ++ vs in do
         (fls, t'') <- floatPatterns0 doCrossCallFloat q vs' t'
         m <- insertFloating fl fls
         return $ case m of
@@ -527,7 +527,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
     (flsf, tf') <- floatPatterns0 doCrossCallFloat q vs tf
     floatNVTApp vs flsf tf tas
   NVTLam v tb -> do
-    (flsb, tb') <- floatPatterns0 doCrossCallFloat q (v : vs) tb
+    (flsb, tb') <- floatPatterns0 doCrossCallFloat q (Just v : vs) tb
     floatNVTLam v flsb tb
   NVTLit _ -> return ([], t)
   NVTCon _ -> return ([], t)
@@ -554,12 +554,12 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
   NVTError _ -> return ([], t)
 
   where
--- {{{     floatNVTAlt :: [Var] -> NVTAlt -> U TCM (([Fl],[Fl]), NVTAlt)
+-- {{{     floatNVTAlt :: [Maybe Var] -> NVTAlt -> U TCM (([Fl],[Fl]), NVTAlt)
     -- |floatNVTAlt| returns a pair like |joinFloatings|
-    floatNVTAlt :: [Var] -> NVTAlt -> U TCM (([Floating],[Floating]), NVTAlt)
+    floatNVTAlt :: [Maybe Var] -> NVTAlt -> U TCM (([Floating],[Floating]), NVTAlt)
     floatNVTAlt vs (NVTACon name cvars b) = do
       (flsb, b') <- floatPatterns0 doCrossCallFloat q (reverse cvars ++ vs) b
-      return (([], filter (\ fl -> all (not . (`elemVarSet` flFreeVars fl)) cvars) flsb), NVTACon name cvars b')
+      return (([], filter (\ fl -> all (not . (`elemVarSet` flFreeVars fl)) $ catMaybes cvars) flsb), NVTACon name cvars b')
     floatNVTAlt vs (NVTAGuard g b) = do
       (flsg, g') <- floatPatterns0 doCrossCallFloat q vs g
       (flsb, b') <- floatPatterns0 doCrossCallFloat q vs b
@@ -570,10 +570,10 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
       return (([], flsb), NVTALit lit b')
 -- }}}
 
--- {{{     floatNVTApp :: [Var] [Fl] NVTTerm [NVTTerm] -> U TCM ([Fl], NVTTerm)
+-- {{{     floatNVTApp :: [Maybe Var] [Fl] NVTTerm [NVTTerm] -> U TCM ([Fl], NVTTerm)
     -- Parts of the main |case| in |floatPatterns1| are factored out for
     -- separate use:
-    floatNVTApp :: [Var] -> [Floating] -> NVTTerm -> [NVTTerm]
+    floatNVTApp :: [Maybe Var] -> [Floating] -> NVTTerm -> [NVTTerm]
                 -> U TCM ([Floating], NVTTerm)
     floatNVTApp vs flsf tf [] = return (flsf, tf)
     floatNVTApp vs flsf tf tas = do
@@ -605,18 +605,18 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
       return (filter (not . (v `elemVarSet`) . flFreeVars) flsb, NVTLam v tb)
 -- }}}
 
--- {{{     floatNVTLets :: [Var] [(Var, NVTTerm)] [Fl] NVTTerm -> U TCM ([Fl], NVTTerm)
+-- {{{     floatNVTLets :: [MVar] [(Var, NVTTerm)] [Fl] NVTTerm -> U TCM ([Fl], NVTTerm)
     -- The pairs need to be outside-in!
-    floatNVTLets :: [Var] -> [(Var, NVTTerm)] -> [Floating] -> NVTTerm
+    floatNVTLets :: [Maybe Var] -> [(Var, NVTTerm)] -> [Floating] -> NVTTerm
                  -> U TCM ([Floating], NVTTerm)
     floatNVTLets vs [] flsb tb = return (flsb, tb)
     floatNVTLets vs ((v, te) : ps) flsb tb = do
-       (flsb', tb') <- floatNVTLets (v : vs) ps flsb tb
+       (flsb', tb') <- floatNVTLets (Just v : vs) ps flsb tb
        floatNVTLet vs v te flsb' tb'
 -- }}}
 
--- {{{     floatNVTLet :: [Var] Var NVTTerm [Fl] NVTTerm -> UTCM ([Fl], NVTTerm)
-    floatNVTLet :: [Var] -> Var -> NVTTerm -> [Floating] -> NVTTerm
+-- {{{     floatNVTLet :: [MVar] Var NVTTerm [Fl] NVTTerm -> UTCM ([Fl], NVTTerm)
+    floatNVTLet :: [Maybe Var] -> Var -> NVTTerm -> [Floating] -> NVTTerm
                  -> U TCM ([Floating], NVTTerm)
     floatNVTLet vs v te flsb tb' = do
       lift $ do
@@ -697,10 +697,10 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
               -- \edcomm{WK}{Same unfortunate renaming as above in |floatPatterns1 (NVTLet ...)|.}
 -- }}}
 
--- {{{     floatNVTDefApp :: [Var] Nat QName [PLet] [NVTT] -> U TCM ([Fl], NVTT)
+-- {{{     floatNVTDefApp :: [MVar] Nat QName [PLet] [NVTT] -> U TCM ([Fl], NVTT)
     -- The plan is to apply this at floating time with |ducall|,
     -- and then extract the |dvArgVars| from that call at squashing time.
-    floatNVTDefApp :: [Var] -> Nat -> QName -> [T.PLet] -> [NVTTerm]
+    floatNVTDefApp :: [Maybe Var] -> Nat -> QName -> [T.PLet] -> [NVTTerm]
                  -> U TCM ([Floating], NVTTerm)
     floatNVTDefApp vs lambdaLen nameF plets ts = do
         used <- lift $ getCompiledArgUse nameF
@@ -726,7 +726,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
                        ])
         flsF <- pruneFloatings (floatingHasName nameF) emptyVarSet -- \edcomm{WK}{as long as we don't prune at/before CCF registration time}
              . eraseFloatings erasedVars
-             <$> floatingsFromPLets (reverse dvArgVars) [] emptyNVRename plets
+             <$> floatingsFromPLets (map Just $ reverse dvArgVars) [] emptyNVRename plets
         let dvArgs = zipWith h givenUsed dvArgVars
               where h False _ = NVTErased
                     h True v = NVTVar v
@@ -735,8 +735,8 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
         --   else floatFloatings doCrossCallFloat q dvArgVars flsF
         let dvref = NVTDef (NVTDefFloating (dvArgVars ++ concatMap flBoundVars flsF)) nameF
             dvcall = NVTApp dvref dvArgs
-        let vs2 = reverse newVars ++ vs
-            vs1 = (map fst lets) ++ vs2
+        let vs2 = map Just (reverse newVars) ++ vs
+            vs1 = (map (Just . fst) lets) ++ vs2
         lift $ do
             reportSDoc "treeless.opt.float.ccf" 50
               $ text "-- floatNVTDefApp 2: " <+> nest 8
@@ -920,7 +920,7 @@ squashFloatings doCrossCallFloat flsC t = do
                      in reportSDoc "treeless.opt.float.ccf" 50
                        $ text "-- AppTDef args: " <+> nest 8 (vcat ps)
                   flsCCF <- eraseFloatings erasedVars
-                         <$> floatingsFromPLets (reverse vVarsLambdaLen) vVarsCCF emptyNVRename
+                         <$> floatingsFromPLets (map Just $ reverse vVarsLambdaLen) vVarsCCF emptyNVRename
                                                 (ccfPLets ccf)
                   let flsCCFboundVarss = map flBoundVars flsCCF
                       flsCCFboundVars = concat flsCCFboundVarss
@@ -1072,7 +1072,7 @@ squashFloatings doCrossCallFloat flsC t = do
     squashTAlt :: NVTAlt -> U TCM NVTAlt
     squashTAlt (NVTACon name cvars b) = NVTACon name cvars
         <$> squashFloatings doCrossCallFloat flsC' b
-      where flsC' = pruneFloatings (const False) (listToVarSet cvars) flsC
+      where flsC' = pruneFloatings (const False) (listToVarSet $ catMaybes cvars) flsC
     squashTAlt (NVTAGuard g b) = do
       g' <- squashFloatings doCrossCallFloat flsC g
       b' <- squashFloatings doCrossCallFloat flsC b
