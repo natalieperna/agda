@@ -108,6 +108,9 @@ ccToTreeless q cc = do
   reportSDoc "treeless.opt.simpl" (30 + v) $ text "-- after third simplification"  $$ pbody body
   body <- eraseTerms q body
   reportSDoc "treeless.opt.erase" (30 + v) $ text (shows q " -- after second erasure") $$ pbody body
+  body <- simplifyTTerm body
+  reportSDoc "treeless.opt.simpl" (30 + v)
+    $ text (shows q " -- after fourth simplification") $$ pbody body
   doSquashCases <- optSquashCases <$> commandLineOptions
   body <- if doSquashCases
     then do
@@ -132,9 +135,9 @@ ccToTreeless q cc = do
             $$ nest 4 (pretty ccf)
           setCompiledCrossCallFloat q ccf
     else return (body, const $ return ())
-  body <- simplifyTTerm body -- necessary for squashing after float
-  reportSDoc "treeless.opt.simpl" (30 + v)
-    $ text (shows q " -- after fourth simplification") $$ pbody body
+  -- body <- simplifyTTerm body -- necessary for squashing after float
+  -- reportSDoc "treeless.opt.simpl" (30 + v)
+  --   $ text (shows q " -- after fifth simplification") $$ pbody body
   used <- usedArguments q body
   when (any not used) $
     reportSDoc "treeless.opt.unused" (30 + v) $
