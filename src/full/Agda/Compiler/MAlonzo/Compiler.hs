@@ -373,7 +373,8 @@ definition ghcOpts kit Defn{defName = q, defType = ty, theDef = d} = do
     (ps0, _) <- lamView <$> closedTerm ghcOpts (foldr ($) T.TErased $ replicate (length used) T.TLam)
     let b0 = foldl HS.App (hsVarUQ $ duname q) [ hsVarUQ x | (~(HS.PVar x), True) <- zip ps0 used ]
 
-    mCCF <- getCrossCallFloat q
+    doAbstractPLet <- optAbstractPLet <$> commandLineOptions
+    mCCF <- if doAbstractPLet then getCrossCallFloat q else return Nothing
     let patVars :: HS.Pat -> [HS.Name] -> [HS.Name] -- difference list
         patVars (HS.PVar v) = (v :)
         patVars (HS.PLit _) = id

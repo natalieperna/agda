@@ -36,6 +36,7 @@ import Agda.Compiler.Treeless.Compare
 import Agda.Compiler.Treeless.NVTTerm
 import Agda.Compiler.Treeless.Pretty
 import Agda.Compiler.Treeless.SplitPLet (splitCCF)
+import Agda.Interaction.Options (optAbstractPLet)
 
 -- import Agda.Utils.Permutation
 import qualified Agda.Utils.Pretty as P
@@ -478,32 +479,34 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
              -- \edcomm{WK}{The necessity to rename here is still unfortunate.}
   NVTVar _ -> return ([], t)
   NVTPrim _ -> return ([], t)
-  NVTApp d@(NVTDef NVTDefDefault name) tas -> if not doCrossCallFloat
-    then floatNVTApp vs [] d tas
-    else do
-    mccf <- lift $ getCrossCallFloat name
-    case mccf of
-      Nothing -> floatNVTApp vs [] d tas
-      Just ccf -> do
-        floatNVTDefApp vs (ccfLambdaLen ccf) name (ccfPLets ccf) tas
+  NVTApp d@(NVTDef NVTDefDefault name) tas -> do
+    doAbstractPLet <- lift (optAbstractPLet <$> commandLineOptions)
+    if not (doCrossCallFloat && doAbstractPLet)
+      then floatNVTApp vs [] d tas
+      else do
+        mccf <- lift $ getCrossCallFloat name
+        case mccf of
+          Nothing -> floatNVTApp vs [] d tas
+          Just ccf -> do
+            floatNVTDefApp vs (ccfLambdaLen ccf) name (ccfPLets ccf) tas
   {-
-          let dvref = NVTDef (NVTDefFloating vVars) name
-          lift $ do
-            reportSDoc "treeless.opt.float.ccf" 30
-              $ text ("-- floatPatterns: Found CCF for " ++ show name)
-            reportSDoc "treeless.opt.float.ccf" 40
-              $ pretty ccf
-            -- reportSDoc "treeless.opt.float.ccf" 60
-            --   $ text ("-- floatPatterns: Expanded CCF floats for " ++ show name)
-            --   $$ nest 4 (vcat $ map pretty fls')
-            reportSDoc "treeless.opt.float.ccf" 30
-              $ text ("-- Using CCF for " ++ shows name " switching to")
-              $$ pretty dvref
-          -- return (fls', dvref)
-          return (fls, dvref)
-            -- WK: The reversing of the variable list, if kept,
-            --     needs to be documented in Syntax,Treeless!
-            -- \unfinished
+              let dvref = NVTDef (NVTDefFloating vVars) name
+              lift $ do
+                reportSDoc "treeless.opt.float.ccf" 30
+                  $ text ("-- floatPatterns: Found CCF for " ++ show name)
+                reportSDoc "treeless.opt.float.ccf" 40
+                  $ pretty ccf
+                -- reportSDoc "treeless.opt.float.ccf" 60
+                --   $ text ("-- floatPatterns: Expanded CCF floats for " ++ show name)
+                --   $$ nest 4 (vcat $ map pretty fls')
+                reportSDoc "treeless.opt.float.ccf" 30
+                  $ text ("-- Using CCF for " ++ shows name " switching to")
+                  $$ pretty dvref
+              -- return (fls', dvref)
+              return (fls, dvref)
+                -- WK: The reversing of the variable list, if kept,
+                --     needs to be documented in Syntax,Treeless!
+                -- \unfinished
 -}
 
   NVTDef NVTDefDefault name -> floatPatterns1 doCrossCallFloat q vs (NVTApp t [])
@@ -732,11 +735,11 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
                     h True v = NVTVar v
         -- flsF <- if nameF == q -- \edcomm{WK}{for now, just cut recursive calls.}
         --   then return flsF
-        --   else floatFloatings doCrossCallFloat q dvArgVars flsF
+        --   else floatFloatings doCrossCallFloat q (map Just dvArgVars) flsF
         let dvref = NVTDef (NVTDefFloating (dvArgVars ++ concatMap flBoundVars flsF)) nameF
             dvcall = NVTApp dvref dvArgs
         let vs2 = map Just (reverse newVars) ++ vs
-            vs1 = (map (Just . fst) lets) ++ vs2
+            vs1 = map (Just . fst) lets ++ vs2
         lift $ do
             reportSDoc "treeless.opt.float.ccf" 50
               $ text "-- floatNVTDefApp 2: " <+> nest 8
