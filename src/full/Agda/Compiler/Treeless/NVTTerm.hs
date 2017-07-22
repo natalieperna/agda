@@ -199,7 +199,7 @@ fromVar err vs v = maybe (tr err) id $ elemIndex (Just v) vs
   where  tr = trace $ "fromVar " ++ shows vs (' ' : show v)
 
 toTTerm, toTTerm0 :: [Maybe Var] -> NVTTerm -> TTerm
-toTTerm vs t = trace ("toTTerm " ++ shows vs (' ' : P.prettyShow t)) $
+toTTerm vs t = -- trace ("toTTerm " ++ shows vs (' ' : P.prettyShow t)) $
                toTTerm0 vs t
 toTTerm0 vs t = case t of
   NVTVar v -> TVar (fromVar __IMPOSSIBLE__ vs v)
@@ -283,7 +283,7 @@ copyNVTAlt (NVTAGuard g b) = (NVTAGuard <$> copyNVTTerm g) <*> copyNVTTerm b
 copyNVTAlt (NVTALit lit b) = NVTALit lit <$> copyNVTTerm b
 
 -- |eraseNVTTerm vs t| corresponds to substituting |NVTErased| for all |vs| in |t|
--- and then perorming some simplifications.
+-- and then performing some simplifications.
 eraseNVTTerm :: VarSet -> NVTTerm -> NVTTerm
 eraseNVTTerm vs t = case t of
   NVTVar v -> if elemVarSet v vs then NVTErased else t
