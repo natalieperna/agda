@@ -604,7 +604,7 @@ term tm0 = asks ccGenPLet >>= \ genPLet -> case tm0 of
         , text ("not isCompiled && any not used = " ++ show (not isCompiled && any not used))
         , text "tm0 = " <+> nest 6 (pretty tm0)
         ])
-    if not isCompiled && any not used
+    if (not isCompiled && any not used) || prefix == dvPrefix
       then if any not missing then term (etaExpand (needed - given) tm0) else do
         f <- lift $ HS.Var <$> xhqn prefix f  -- used stripped function
         -- flip (foldl HS.App) us <$>
