@@ -599,7 +599,7 @@ floatPatterns1 doCrossCallFloat q vs t = case t of
     floatNVTLams [] flsb b = return (flsb, b)
     floatNVTLams (u : us) flsb b = do
       (flsb', b') <- floatNVTLams us flsb b
-      floatNVTLam u flsb b
+      floatNVTLam u flsb' b'
 -- }}}
 
 -- {{{     floatNVTLam :: Var -> [Fl] -> NVTTerm -> U TCM ([Fl], NVTTerm)
