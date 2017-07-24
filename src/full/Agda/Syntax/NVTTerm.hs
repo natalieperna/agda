@@ -64,7 +64,34 @@ data NVTAlt
   | NVTALit Literal NVTTerm
   deriving (Show)
 
--- ``Flavour'' of @NVTDef@, analogous to @TDefVariant@
+-- ``Flavour'' of @NVTDef@, originally intended analogous to @TDefVariant@
+--
+-- Assuming @f@ is known to be @n@-ary, with @m@ used arguments,
+-- and that @f@ translated into @dF@, @duF@, @dvF@
+-- (that is, @dF@ is @n@-ary, and @duF@ is @m@-ary),
+-- and @duF v1 ... vm = let (vSm, ...., vp) = bindRHS in dvF v1 ... vm vSm ... vp@:
+--
+-- Before floating:
+-- @NVTApp (NVTDef NVTDefDefault f) [arg1, ..., argn]@
+-- @dF arg1 ... argn@
+-- @duF arg1u ... argnu@ where @[arg1u, ..., argnu] = filter used [arg1, ..., argn]@
+--
+-- During floating:
+-- @let v1 = arg1; ...; vm = argm; (vSm, ...., vp) = bindRHS@
+--   @in NVTDef (NVTDefFloating [v1U, ... Erased ..., vmU, vSm, ...., vp]) f@
+-- @duF arg1 ... argm@
+-- @dvF arg1 ... argm vSm ... vp@
+--
+-- During floating: Not: @NVTApp (NVTDef (NVTDefFloating [vSm, ...., vp]) f) [arg1, ..., argm]@
+--
+--
+-- After floating: Either revert to @NVTDefDefault@, or:
+-- @NVTApp (NVTDef NVTDefAbstractPLet f) [arg1, ..., argm, argSm, ...., argp]@
+-- @duF arg1 ... argm@
+-- @dvF arg1 ... argm argSm, ...., argp@
+--
+-- Additional complications arise if fewer or more than @n@ arguments are initially supplied.
+--
 data NVTDefVariant
   = NVTDefDefault         -- traditional variants: "du*" or "d*"
   | NVTDefFloating [Var]  -- additional variable arguments for possible switch to "dv*" variant.
